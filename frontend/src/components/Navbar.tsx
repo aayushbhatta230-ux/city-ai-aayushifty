@@ -1,0 +1,133 @@
+import React from 'react';
+import { 
+  Layers, 
+  Terminal, 
+  Cpu, 
+  Activity, 
+  ShieldCheck, 
+  BookOpen, 
+  CheckSquare, 
+  Settings, 
+  AlertOctagon, 
+  PlusCircle 
+} from 'lucide-react';
+import { Project } from '../types';
+
+interface NavbarProps {
+  activeTab: string;
+  setActiveTab: (tab: string) => void;
+  projects: Project[];
+  selectedProject: Project | null;
+  onSelectProject: (proj: Project) => void;
+  onNewProject: () => void;
+  isEmergencyStopped: boolean;
+  onToggleEmergencyStop: () => void;
+}
+
+export const Navbar: React.FC<NavbarProps> = ({
+  activeTab,
+  setActiveTab,
+  projects,
+  selectedProject,
+  onSelectProject,
+  onNewProject,
+  isEmergencyStopped,
+  onToggleEmergencyStop
+}) => {
+  const tabs = [
+    { id: 'dashboard', label: 'Dashboard', icon: Layers },
+    { id: 'workspace', label: 'Workspace & DAG', icon: Terminal },
+    { id: 'agents', label: 'Agent Monitor', icon: Cpu },
+    { id: 'timeline', label: 'Timeline', icon: Activity },
+    { id: 'verification', label: 'Verification Center', icon: ShieldCheck },
+    { id: 'memory', label: 'Project Memory', icon: BookOpen },
+    { id: 'approvals', label: 'Approvals', icon: CheckSquare },
+    { id: 'models', label: 'Model Router', icon: Settings },
+  ];
+
+  return (
+    <header className="border-b border-[#1E293B] bg-[#0A0E17]/90 backdrop-blur sticky top-0 z-50 px-6 py-3 flex items-center justify-between">
+      {/* Brand & Project Selector */}
+      <div className="flex items-center gap-6">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded bg-gradient-to-tr from-blue-600 to-violet-600 flex items-center justify-center font-bold text-white shadow-lg shadow-blue-500/20">
+            F
+          </div>
+          <div>
+            <div className="text-base font-bold tracking-wider text-slate-100 flex items-center gap-2">
+              FORGE AI
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/30 font-mono">
+                FACTORY
+              </span>
+            </div>
+            <div className="text-xs text-slate-500 font-mono">AUTONOMOUS ENGINEERING</div>
+          </div>
+        </div>
+
+        {/* Project Selector dropdown */}
+        <div className="flex items-center gap-2 pl-4 border-l border-slate-800">
+          <select 
+            aria-label="Active Project"
+            className="bg-[#121824] border border-[#1E293B] text-slate-200 text-sm rounded px-3 py-1.5 focus:outline-none focus:border-blue-500"
+            value={selectedProject?.id || ''}
+            onChange={(e) => {
+              const p = projects.find(x => x.id === e.target.value);
+              if (p) onSelectProject(p);
+            }}
+          >
+            {projects.length === 0 && <option value="">No Projects Created</option>}
+            {projects.map(p => (
+              <option key={p.id} value={p.id}>{p.name} ({p.status})</option>
+            ))}
+          </select>
+
+          <button 
+            onClick={onNewProject}
+            className="flex items-center gap-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 px-2.5 py-1.5 rounded transition border border-slate-700"
+            title="Create New Project"
+          >
+            <PlusCircle size={14} className="text-blue-400" />
+            <span>New</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Navigation Tabs */}
+      <nav className="flex items-center gap-1">
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition ${
+                isActive 
+                  ? 'bg-blue-600/15 text-blue-400 border border-blue-500/40 shadow-sm shadow-blue-500/20' 
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              }`}
+            >
+              <Icon size={15} />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* Global Emergency Stop Action */}
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onToggleEmergencyStop}
+          className={`flex items-center gap-2 text-xs font-bold uppercase tracking-wider px-3.5 py-1.5 rounded transition ${
+            isEmergencyStopped 
+              ? 'bg-red-600 text-white shadow-lg shadow-red-600/50 animate-pulse'
+              : 'bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white border border-red-500/30'
+          }`}
+        >
+          <AlertOctagon size={16} />
+          <span>{isEmergencyStopped ? 'SYSTEM HALTED' : 'GLOBAL STOP'}</span>
+        </button>
+      </div>
+    </header>
+  );
+};
