@@ -12,8 +12,10 @@ import { ApprovalCenterView } from './components/ApprovalCenterView';
 import { ProjectMemoryView } from './components/ProjectMemoryView';
 import { ModelConfigView } from './components/ModelConfigView';
 
+import { AgentCity3D } from './components/AgentCity3D';
+
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [activeTab, setActiveTab] = useState<string>('city3d');
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -165,6 +167,14 @@ export const App: React.FC = () => {
       />
 
       <main className="flex-1">
+        {activeTab === 'city3d' && (
+          <AgentCity3D
+            project={selectedProject}
+            tasks={tasks}
+            isEmergencyStopped={isEmergencyStopped}
+          />
+        )}
+
         {activeTab === 'dashboard' && (
           <DashboardView
             projects={projects}

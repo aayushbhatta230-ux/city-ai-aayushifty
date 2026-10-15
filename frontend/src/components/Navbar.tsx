@@ -9,7 +9,8 @@ import {
   CheckSquare, 
   Settings, 
   AlertOctagon, 
-  PlusCircle 
+  PlusCircle,
+  Building2 
 } from 'lucide-react';
 import { Project } from '../types';
 
@@ -35,6 +36,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleEmergencyStop
 }) => {
   const tabs = [
+    { id: 'city3d', label: '3D Agent City', icon: Building2 },
     { id: 'dashboard', label: 'Dashboard', icon: Layers },
     { id: 'workspace', label: 'Workspace & DAG', icon: Terminal },
     { id: 'agents', label: 'Agent Monitor', icon: Cpu },
