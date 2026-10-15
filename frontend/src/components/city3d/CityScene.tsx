@@ -5,10 +5,11 @@ import {
   RoadSegment, 
   Intersection, 
   Vehicle, 
-  Pedestrian,
+  Pedestrian, 
   Incident, 
   CameraMode, 
-  OverlayMode 
+  OverlayMode,
+  AgentCharacter 
 } from '../../simulation/types';
 
 interface CitySceneProps {
@@ -17,12 +18,16 @@ interface CitySceneProps {
   intersections: Intersection[];
   vehicles: Vehicle[];
   pedestrians?: Pedestrian[];
+  agentCharacters: AgentCharacter[];
   incidents: Incident[];
-  simulationTime: number; // 0.0 - 24.0
+  simulationTime: number;
   cameraMode: CameraMode;
   overlayMode: OverlayMode;
   selectedEntityId: string | null;
-  onSelectEntity: (type: 'BUILDING' | 'VEHICLE' | 'INCIDENT', id: string) => void;
+  selectedAgentId: string | null;
+  onSelectEntity: (type: 'BUILDING' | 'VEHICLE' | 'AGENT', id: string) => void;
+  onDoubleClickAgent: (agentId: string) => void;
+  onMoveAgent?: (agentId: string, dx: number, dz: number) => void;
 }
 
 export const CityScene: React.FC<CitySceneProps> = ({
@@ -31,35 +36,35 @@ export const CityScene: React.FC<CitySceneProps> = ({
   intersections,
   vehicles,
   pedestrians = [],
+  agentCharacters,
   incidents,
   simulationTime,
   cameraMode,
   overlayMode,
   selectedEntityId,
-  onSelectEntity
+  selectedAgentId,
+  onSelectEntity,
+  onDoubleClickAgent,
+  onMoveAgent
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
 
-  // Mesh registries for fast updates without recreating scene
+  // Mesh registries
   const buildingGroupMap = useRef<Map<string, THREE.Group>>(new Map());
   const vehicleGroupMap = useRef<Map<string, THREE.Group>>(new Map());
-  const pedestrianGroupMap = useRef<Map<string, THREE.Group>>(new Map());
+  const agentMeshMap = useRef<Map<string, THREE.Group>>(new Map());
+  const agentThoughtMeshMap = useRef<Map<string, THREE.Mesh>>(new Map());
   const roadMeshMap = useRef<Map<string, THREE.Mesh>>(new Map());
-  const trafficLightLenses = useRef<Map<string, { red: THREE.Mesh; green: THREE.Mesh }>>(new Map());
-  const streetLightMaterials = useRef<THREE.MeshBasicMaterial[]>([]);
 
-  // Lighting references
+  // Lighting
   const sunLightRef = useRef<THREE.DirectionalLight | null>(null);
-  const hemiLightRef = useRef<THREE.HemisphereLight | null>(null);
   const ambientLightRef = useRef<THREE.AmbientLight | null>(null);
+  const hemiLightRef = useRef<THREE.HemisphereLight | null>(null);
 
-  // Procedural Window Grid Canvas Texture
-  const windowTextureRef = useRef<THREE.CanvasTexture | null>(null);
-
-  // Camera orbit state
+  // Camera Orbit & Pan State
   const orbitState = useRef({
     angleX: 0.85,
     angleY: 0.55,
@@ -70,49 +75,75 @@ export const CityScene: React.FC<CitySceneProps> = ({
     prevY: 0
   });
 
-  // Helper to create illuminated window grid texture
-  const createWindowTexture = (): THREE.CanvasTexture => {
+  // Helper to create glowing signboard canvas texture for buildings
+  const createSignboardTexture = (text: string, colorHex: string): THREE.CanvasTexture => {
     const canvas = document.createElement('canvas');
-    canvas.width = 128;
+    canvas.width = 512;
     canvas.height = 128;
     const ctx = canvas.getContext('2d')!;
 
-    // Dark building surface background
-    ctx.fillStyle = '#0F172A';
-    ctx.fillRect(0, 0, 128, 128);
+    // Dark high-tech badge background
+    ctx.fillStyle = '#060B18';
+    ctx.fillRect(0, 0, 512, 128);
 
-    // Glowing window array
-    ctx.fillStyle = '#FDE047'; // warm yellow glow
-    const rows = 8;
-    const cols = 8;
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        // Pseudo-random window occupancy
-        if ((r * 3 + c * 7) % 5 !== 0) {
-          ctx.fillRect(c * 16 + 3, r * 16 + 3, 10, 10);
-        }
-      }
-    }
+    // Glowing neon border
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = colorHex;
+    ctx.strokeRect(4, 4, 504, 120);
+
+    // High-tech corner accents
+    ctx.fillStyle = colorHex;
+    ctx.fillRect(0, 0, 24, 8);
+    ctx.fillRect(0, 0, 8, 24);
+    ctx.fillRect(512 - 24, 0, 24, 8);
+    ctx.fillRect(512 - 8, 0, 8, 24);
+
+    // Text Label
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 36px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 256, 64);
 
     const tex = new THREE.CanvasTexture(canvas);
-    tex.wrapS = THREE.RepeatWrapping;
-    tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(2, 6);
     return tex;
   };
 
-  // --- Initial Scene Mount ---
+  // Helper to create speech/thought bubble canvas texture for agents
+  const createThoughtTexture = (text: string): THREE.CanvasTexture => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d')!;
+
+    ctx.fillStyle = '#0F172ACC';
+    ctx.roundRect(4, 4, 504, 120, 20);
+    ctx.fill();
+
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#38BDF8';
+    ctx.stroke();
+
+    ctx.fillStyle = '#F8FAFC';
+    ctx.font = 'bold 26px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text.slice(0, 36), 256, 64);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    return tex;
+  };
+
+  // --- Initial Scene Setup ---
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
 
-    // 1. Scene setup
     const scene = new THREE.Scene();
     sceneRef.current = scene;
     scene.background = new THREE.Color(0x060913);
-    scene.fog = new THREE.FogExp2(0x060913, 0.0055);
+    scene.fog = new THREE.FogExp2(0x060913, 0.005);
 
-    // 2. Camera setup
     const camera = new THREE.PerspectiveCamera(
       45,
       container.clientWidth / container.clientHeight,
@@ -121,7 +152,6 @@ export const CityScene: React.FC<CitySceneProps> = ({
     );
     cameraRef.current = camera;
 
-    // 3. Renderer setup
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.setSize(container.clientWidth, container.clientHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -130,8 +160,8 @@ export const CityScene: React.FC<CitySceneProps> = ({
     rendererRef.current = renderer;
     container.appendChild(renderer.domElement);
 
-    // 4. Lights
-    const ambient = new THREE.AmbientLight(0xFFFFFF, 0.5);
+    // Lights
+    const ambient = new THREE.AmbientLight(0xFFFFFF, 0.55);
     scene.add(ambient);
     ambientLightRef.current = ambient;
 
@@ -139,44 +169,28 @@ export const CityScene: React.FC<CitySceneProps> = ({
     scene.add(hemi);
     hemiLightRef.current = hemi;
 
-    const sun = new THREE.DirectionalLight(0xFFFBEB, 1.3);
+    const sun = new THREE.DirectionalLight(0xFFFBEB, 1.35);
     sun.position.set(70, 100, 50);
     sun.castShadow = true;
     sun.shadow.mapSize.width = 2048;
     sun.shadow.mapSize.height = 2048;
-    sun.shadow.camera.near = 0.5;
-    sun.shadow.camera.far = 300;
-    const d = 110;
-    sun.shadow.camera.left = -d;
-    sun.shadow.camera.right = d;
-    sun.shadow.camera.top = d;
-    sun.shadow.camera.bottom = -d;
     scene.add(sun);
     sunLightRef.current = sun;
 
-    // 5. Ground Terrain & Baseplate
-    const groundGeo = new THREE.PlaneGeometry(240, 240);
-    const groundMat = new THREE.MeshStandardMaterial({
-      color: 0x080C14,
-      roughness: 0.85,
-      metalness: 0.15
-    });
+    // Ground Plate
+    const groundGeo = new THREE.PlaneGeometry(260, 260);
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x070B14, roughness: 0.9, metalness: 0.1 });
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.05;
     ground.receiveShadow = true;
     scene.add(ground);
 
-    // City grid baseline grid helper
-    const grid = new THREE.GridHelper(240, 48, 0x1E293B, 0x0F172A);
+    const grid = new THREE.GridHelper(260, 52, 0x1E293B, 0x0F172A);
     grid.position.y = -0.02;
     scene.add(grid);
 
-    // Shared window texture
-    const windowTex = createWindowTexture();
-    windowTextureRef.current = windowTex;
-
-    // --- 6. Build Roads, Sidewalks, Crosswalks, and Traffic Lights ---
+    // Build Roads & Sidewalks
     roads.forEach(r => {
       const dx = r.end[0] - r.start[0];
       const dz = r.end[1] - r.start[1];
@@ -185,13 +199,8 @@ export const CityScene: React.FC<CitySceneProps> = ({
       const midX = (r.start[0] + r.end[0]) / 2;
       const midZ = (r.start[1] + r.end[1]) / 2;
 
-      // Road Surface (Dark Asphalt)
-      const roadGeo = new THREE.PlaneGeometry(length, 5.0);
-      const roadMat = new THREE.MeshStandardMaterial({
-        color: 0x161D2B,
-        roughness: 0.75,
-        metalness: 0.25
-      });
+      const roadGeo = new THREE.PlaneGeometry(length, 5.2);
+      const roadMat = new THREE.MeshStandardMaterial({ color: 0x141B29, roughness: 0.8 });
       const roadMesh = new THREE.Mesh(roadGeo, roadMat);
       roadMesh.rotation.x = -Math.PI / 2;
       roadMesh.rotation.z = -angle;
@@ -201,302 +210,74 @@ export const CityScene: React.FC<CitySceneProps> = ({
       scene.add(roadMesh);
       roadMeshMap.current.set(r.id, roadMesh);
 
-      // Center Dashed White Line
-      const centerLineGeo = new THREE.PlaneGeometry(length * 0.95, 0.16);
-      const centerLineMat = new THREE.MeshBasicMaterial({ color: 0xF8FAFC });
-      const centerLine = new THREE.Mesh(centerLineGeo, centerLineMat);
-      centerLine.rotation.x = -Math.PI / 2;
-      centerLine.rotation.z = -angle;
-      centerLine.position.set(midX, 0.03, midZ);
-      scene.add(centerLine);
+      // Center Line
+      const lineGeo = new THREE.PlaneGeometry(length * 0.95, 0.18);
+      const lineMat = new THREE.MeshBasicMaterial({ color: 0xF8FAFC });
+      const line = new THREE.Mesh(lineGeo, lineMat);
+      line.rotation.x = -Math.PI / 2;
+      line.rotation.z = -angle;
+      line.position.set(midX, 0.03, midZ);
+      scene.add(line);
 
-      // Concrete Sidewalks on both sides
-      const sidewalkMat = new THREE.MeshStandardMaterial({
-        color: 0x334155,
-        roughness: 0.9
-      });
-      [-3.0, 3.0].forEach(offsetY => {
-        const swGeo = new THREE.BoxGeometry(length, 0.15, 1.2);
-        const swMesh = new THREE.Mesh(swGeo, sidewalkMat);
+      // Elevated Sidewalks
+      const swMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.9 });
+      [-3.1, 3.1].forEach(offY => {
+        const swGeo = new THREE.BoxGeometry(length, 0.16, 1.3);
+        const swMesh = new THREE.Mesh(swGeo, swMat);
         swMesh.rotation.y = -angle;
-        // Calculate offset position
-        const nx = -Math.sin(angle) * offsetY;
-        const nz = Math.cos(angle) * offsetY;
+        const nx = -Math.sin(angle) * offY;
+        const nz = Math.cos(angle) * offY;
         swMesh.position.set(midX + nx, 0.08, midZ + nz);
         swMesh.receiveShadow = true;
         scene.add(swMesh);
       });
     });
 
-    // Intersections: Zebra Crosswalks & 3D Traffic Light Gantries
-    intersections.forEach(inter => {
-      // Intersection junction plate
-      const plateGeo = new THREE.PlaneGeometry(5.4, 5.4);
-      const plateMat = new THREE.MeshStandardMaterial({ color: 0x1E293B, roughness: 0.8 });
-      const plate = new THREE.Mesh(plateGeo, plateMat);
-      plate.rotation.x = -Math.PI / 2;
-      plate.position.set(inter.x, 0.025, inter.z);
-      scene.add(plate);
-
-      // Traffic Light Pole
-      const poleGeo = new THREE.CylinderGeometry(0.12, 0.12, 4.5, 8);
-      const poleMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.8 });
-      const pole = new THREE.Mesh(poleGeo, poleMat);
-      pole.position.set(inter.x + 3.2, 2.25, inter.z + 3.2);
-      scene.add(pole);
-
-      // Signal Housing Box
-      const boxGeo = new THREE.BoxGeometry(0.5, 1.2, 0.4);
-      const boxMat = new THREE.MeshStandardMaterial({ color: 0x0F172A });
-      const signalBox = new THREE.Mesh(boxGeo, boxMat);
-      signalBox.position.set(inter.x + 3.2, 3.8, inter.z + 3.2);
-      scene.add(signalBox);
-
-      // Red and Green Light Lenses
-      const redLensMat = new THREE.MeshBasicMaterial({ color: 0xEF4444 });
-      const greenLensMat = new THREE.MeshBasicMaterial({ color: 0x10B981 });
-      const lensGeo = new THREE.SphereGeometry(0.12, 8, 8);
-
-      const redLens = new THREE.Mesh(lensGeo, redLensMat);
-      redLens.position.set(inter.x + 3.2, 4.1, inter.z + 3.0);
-      scene.add(redLens);
-
-      const greenLens = new THREE.Mesh(lensGeo, greenLensMat);
-      greenLens.position.set(inter.x + 3.2, 3.5, inter.z + 3.0);
-      scene.add(greenLens);
-
-      trafficLightLenses.current.set(inter.id, { red: redLens, green: greenLens });
-    });
-
-    // --- 7. Procedural 3D Architectural Buildings ---
+    // Build Named Buildings with Floating Neon Signboards
     buildings.forEach(b => {
       const bGroup = new THREE.Group();
       bGroup.position.set(b.x, 0, b.z);
       bGroup.userData = { type: 'BUILDING', id: b.id };
 
       if (b.type === 'PARK_SPACE') {
-        // Lush grass base
-        const parkGeo = new THREE.BoxGeometry(b.width, 0.25, b.depth);
-        const parkMat = new THREE.MeshStandardMaterial({ color: 0x15803D, roughness: 0.9 });
-        const parkPlate = new THREE.Mesh(parkGeo, parkMat);
-        parkPlate.position.y = 0.12;
-        parkPlate.receiveShadow = true;
-        bGroup.add(parkPlate);
+        // Central Innovation Plaza
+        const pGeo = new THREE.BoxGeometry(b.width, 0.25, b.depth);
+        const pMat = new THREE.MeshStandardMaterial({ color: 0x15803D, roughness: 0.9 });
+        const pMesh = new THREE.Mesh(pGeo, pMat);
+        pMesh.position.y = 0.12;
+        bGroup.add(pMesh);
 
-        // Reflective Water Pond
-        const pondGeo = new THREE.CylinderGeometry(4.5, 4.5, 0.1, 16);
-        const pondMat = new THREE.MeshStandardMaterial({
-          color: 0x0284C7,
-          metalness: 0.85,
-          roughness: 0.15
-        });
-        const pond = new THREE.Mesh(pondGeo, pondMat);
-        pond.position.set(0, 0.26, 0);
-        bGroup.add(pond);
+        // Circular Amphitheater / Forum in Plaza
+        const forumGeo = new THREE.CylinderGeometry(5.5, 6.0, 0.35, 24);
+        const forumMat = new THREE.MeshStandardMaterial({ color: 0x1E293B, metalness: 0.5 });
+        const forum = new THREE.Mesh(forumGeo, forumMat);
+        forum.position.y = 0.3;
+        bGroup.add(forum);
 
-        // Procedural Trees
-        const treeOffsets = [
-          [-6, -6], [6, -6], [-6, 6], [6, 6],
-          [-7, 0], [7, 0], [0, -7], [0, 7]
-        ];
-        treeOffsets.forEach(([tx, tz], tIdx) => {
-          const trunkGeo = new THREE.CylinderGeometry(0.2, 0.25, 1.8, 6);
-          const trunkMat = new THREE.MeshStandardMaterial({ color: 0x78350F, roughness: 0.9 });
-          const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-          trunk.position.set(tx, 0.9, tz);
-          trunk.castShadow = true;
+        // Holographic Forum Core
+        const coreGeo = new THREE.CylinderGeometry(1.5, 1.5, 0.6, 16);
+        const coreMat = new THREE.MeshBasicMaterial({ color: 0x38BDF8 });
+        const core = new THREE.Mesh(coreGeo, coreMat);
+        core.position.y = 0.6;
+        bGroup.add(core);
+
+        // Surrounding Trees
+        [[-7, -7], [7, -7], [-7, 7], [7, 7]].forEach(([tx, tz]) => {
+          const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 2.0), new THREE.MeshStandardMaterial({ color: 0x78350F }));
+          trunk.position.set(tx, 1.0, tz);
           bGroup.add(trunk);
-
-          // Varied foliage shapes
-          const foliageGeo = (tIdx % 2 === 0) 
-            ? new THREE.ConeGeometry(1.6, 3.0, 7) 
-            : new THREE.SphereGeometry(1.4, 7, 7);
-          const foliageMat = new THREE.MeshStandardMaterial({ 
-            color: (tIdx % 3 === 0) ? 0x16A34A : 0x15803D,
-            roughness: 0.8
-          });
-          const foliage = new THREE.Mesh(foliageGeo, foliageMat);
-          foliage.position.set(tx, 2.6, tz);
-          foliage.castShadow = true;
+          const foliage = new THREE.Mesh(new THREE.ConeGeometry(1.8, 3.2, 8), new THREE.MeshStandardMaterial({ color: 0x16A34A }));
+          foliage.position.set(tx, 3.0, tz);
           bGroup.add(foliage);
         });
 
-      } else if (b.type === 'SKYSCRAPER') {
-        // Multi-tier tiered skyscraper
-        const baseH = b.height * 0.55;
-        const baseGeo = new THREE.BoxGeometry(b.width, baseH, b.depth);
-        const baseMat = new THREE.MeshStandardMaterial({
-          color: new THREE.Color(b.facadeColor),
-          metalness: 0.7,
-          roughness: 0.25
-        });
-        const baseMesh = new THREE.Mesh(baseGeo, baseMat);
-        baseMesh.position.y = baseH / 2;
-        baseMesh.castShadow = true;
-        baseMesh.receiveShadow = true;
-        bGroup.add(baseMesh);
-
-        // Upper Tier Setback
-        const topH = b.height * 0.45;
-        const topW = b.width * 0.75;
-        const topD = b.depth * 0.75;
-        const topGeo = new THREE.BoxGeometry(topW, topH, topD);
-        const topMesh = new THREE.Mesh(topGeo, baseMat);
-        topMesh.position.y = baseH + topH / 2;
-        topMesh.castShadow = true;
-        topMesh.receiveShadow = true;
-        bGroup.add(topMesh);
-
-        // Rooftop features
-        if (b.roofStyle === 'ANTENNA') {
-          const spireGeo = new THREE.CylinderGeometry(0.1, 0.35, 7.0, 6);
-          const spireMat = new THREE.MeshStandardMaterial({ color: 0xE2E8F0, metalness: 0.9 });
-          const spire = new THREE.Mesh(spireGeo, spireMat);
-          spire.position.y = b.height + 3.5;
-          bGroup.add(spire);
-
-          // Red aircraft warning beacon
-          const beaconGeo = new THREE.SphereGeometry(0.25, 8, 8);
-          const beaconMat = new THREE.MeshBasicMaterial({ color: 0xEF4444 });
-          const beacon = new THREE.Mesh(beaconGeo, beaconMat);
-          beacon.position.y = b.height + 7.1;
-          bGroup.add(beacon);
-        } else if (b.roofStyle === 'HELIPAD') {
-          const padGeo = new THREE.CylinderGeometry(2.4, 2.4, 0.3, 16);
-          const padMat = new THREE.MeshStandardMaterial({ color: 0x1E293B, roughness: 0.5 });
-          const pad = new THREE.Mesh(padGeo, padMat);
-          pad.position.y = b.height + 0.15;
-          bGroup.add(pad);
-
-          const ringGeo = new THREE.RingGeometry(1.6, 1.8, 16);
-          const ringMat = new THREE.MeshBasicMaterial({ color: 0xFDE047, side: THREE.DoubleSide });
-          const ring = new THREE.Mesh(ringGeo, ringMat);
-          ring.rotation.x = -Math.PI / 2;
-          ring.position.y = b.height + 0.32;
-          bGroup.add(ring);
-        }
-
-      } else if (b.type === 'HOUSE') {
-        // Low-rise suburban house with pitched roof
-        const bodyGeo = new THREE.BoxGeometry(b.width, b.height, b.depth);
-        const bodyMat = new THREE.MeshStandardMaterial({
-          color: new THREE.Color(b.facadeColor),
-          roughness: 0.7
-        });
-        const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-        bodyMesh.position.y = b.height / 2;
-        bodyMesh.castShadow = true;
-        bodyMesh.receiveShadow = true;
-        bGroup.add(bodyMesh);
-
-        // Triangular Pitched Roof (Cone / Prism)
-        const roofGeo = new THREE.ConeGeometry(b.width * 0.75, 2.2, 4);
-        const roofMat = new THREE.MeshStandardMaterial({
-          color: new THREE.Color(b.roofColor),
-          roughness: 0.8
-        });
-        const roofMesh = new THREE.Mesh(roofGeo, roofMat);
-        roofMesh.rotation.y = Math.PI / 4;
-        roofMesh.position.y = b.height + 1.1;
-        roofMesh.castShadow = true;
-        bGroup.add(roofMesh);
-
-        // Chimney
-        const chimGeo = new THREE.BoxGeometry(0.6, 1.5, 0.6);
-        const chimMat = new THREE.MeshStandardMaterial({ color: 0x78350F });
-        const chim = new THREE.Mesh(chimGeo, chimMat);
-        chim.position.set(1.5, b.height + 1.6, 0.5);
-        bGroup.add(chim);
-
-      } else if (b.type === 'FACTORY' || b.type === 'SILO') {
-        if (b.type === 'SILO') {
-          // Cylindrical Grain/Chemical Silos
-          const siloGeo = new THREE.CylinderGeometry(b.width * 0.45, b.width * 0.45, b.height, 16);
-          const siloMat = new THREE.MeshStandardMaterial({ color: 0x94A3B8, metalness: 0.8, roughness: 0.3 });
-          const silo = new THREE.Mesh(siloGeo, siloMat);
-          silo.position.y = b.height / 2;
-          silo.castShadow = true;
-          bGroup.add(silo);
-
-          const capGeo = new THREE.SphereGeometry(b.width * 0.45, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
-          const cap = new THREE.Mesh(capGeo, siloMat);
-          cap.position.y = b.height;
-          bGroup.add(cap);
-        } else {
-          // Industrial Factory with Smokestacks
-          const fGeo = new THREE.BoxGeometry(b.width, b.height, b.depth);
-          const fMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(b.facadeColor), roughness: 0.8 });
-          const fMesh = new THREE.Mesh(fGeo, fMat);
-          fMesh.position.y = b.height / 2;
-          fMesh.castShadow = true;
-          bGroup.add(fMesh);
-
-          // Smokestacks
-          [[-2, -2], [2, -2]].forEach(([sx, sz]) => {
-            const stackGeo = new THREE.CylinderGeometry(0.5, 0.7, 5.0, 10);
-            const stackMat = new THREE.MeshStandardMaterial({ color: 0x451A03, roughness: 0.9 });
-            const stack = new THREE.Mesh(stackGeo, stackMat);
-            stack.position.set(sx, b.height + 2.5, sz);
-            stack.castShadow = true;
-            bGroup.add(stack);
-          });
-        }
-
-      } else if (b.type === 'HOSPITAL') {
-        // Hospital with Red Cross Sign
-        const hGeo = new THREE.BoxGeometry(b.width, b.height, b.depth);
-        const hMat = new THREE.MeshStandardMaterial({ color: 0xF8FAFC, roughness: 0.3, metalness: 0.2 });
-        const hMesh = new THREE.Mesh(hGeo, hMat);
-        hMesh.position.y = b.height / 2;
-        hMesh.castShadow = true;
-        bGroup.add(hMesh);
-
-        // 3D Red Cross on roof facade
-        const crossH = new THREE.BoxGeometry(2.4, 0.7, 0.3);
-        const crossV = new THREE.BoxGeometry(0.7, 2.4, 0.3);
-        const crossMat = new THREE.MeshBasicMaterial({ color: 0xEF4444 });
-        const c1 = new THREE.Mesh(crossH, crossMat);
-        const c2 = new THREE.Mesh(crossV, crossMat);
-        c1.position.set(0, b.height * 0.75, b.depth / 2 + 0.16);
-        c2.position.set(0, b.height * 0.75, b.depth / 2 + 0.16);
-        bGroup.add(c1);
-        bGroup.add(c2);
-
-      } else if (b.underConstruction) {
-        // Active Construction Site with Tower Crane & Scaffolding
-        const halfH = b.height * 0.45;
-        const structGeo = new THREE.BoxGeometry(b.width * 0.9, halfH, b.depth * 0.9);
-        const structMat = new THREE.MeshStandardMaterial({ color: 0x64748B, roughness: 0.9 });
-        const structMesh = new THREE.Mesh(structGeo, structMat);
-        structMesh.position.y = halfH / 2;
-        bGroup.add(structMesh);
-
-        // Scaffolding cage
-        const scaffoldGeo = new THREE.BoxGeometry(b.width, b.height * 0.8, b.depth);
-        const scaffoldWire = new THREE.WireframeGeometry(scaffoldGeo);
-        const scaffoldLine = new THREE.LineSegments(scaffoldWire, new THREE.LineBasicMaterial({ color: 0xEAB308 }));
-        scaffoldLine.position.y = (b.height * 0.8) / 2;
-        bGroup.add(scaffoldLine);
-
-        // Tower Crane (Yellow lattice mast + horizontal jib)
-        const craneMastGeo = new THREE.BoxGeometry(0.6, b.height + 7, 0.6);
-        const craneMat = new THREE.MeshStandardMaterial({ color: 0xFACC15, metalness: 0.7 });
-        const mast = new THREE.Mesh(craneMastGeo, craneMat);
-        mast.position.set(b.width / 2 + 1.0, (b.height + 7) / 2, 0);
-        bGroup.add(mast);
-
-        const jibGeo = new THREE.BoxGeometry(10, 0.5, 0.5);
-        const jib = new THREE.Mesh(jibGeo, craneMat);
-        jib.position.set(b.width / 2 + 1.0 + 3.0, b.height + 6.8, 0);
-        bGroup.add(jib);
-
       } else {
-        // Standard Modern Office / Apartment Block
+        // Multi-tier architecture
         const bGeo = new THREE.BoxGeometry(b.width, b.height, b.depth);
         const bMat = new THREE.MeshStandardMaterial({
           color: new THREE.Color(b.facadeColor),
           roughness: 0.35,
-          metalness: 0.5
+          metalness: 0.55
         });
         const mesh = new THREE.Mesh(bGeo, bMat);
         mesh.position.y = b.height / 2;
@@ -504,19 +285,48 @@ export const CityScene: React.FC<CitySceneProps> = ({
         mesh.receiveShadow = true;
         bGroup.add(mesh);
 
-        // Crisp architectural edges
-        const edgeGeo = new THREE.EdgesGeometry(bGeo);
-        const edgeLine = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({ color: 0x334155 }));
-        mesh.add(edgeLine);
+        // Roof details (Antenna, Helipad, Chimney)
+        if (b.roofStyle === 'ANTENNA') {
+          const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.35, 8.0, 6), new THREE.MeshStandardMaterial({ color: 0xE2E8F0, metalness: 0.9 }));
+          spire.position.y = b.height + 4.0;
+          bGroup.add(spire);
+
+          const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 8), new THREE.MeshBasicMaterial({ color: 0xEF4444 }));
+          beacon.position.y = b.height + 8.1;
+          bGroup.add(beacon);
+        } else if (b.roofStyle === 'HELIPAD') {
+          const pad = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 0.3, 16), new THREE.MeshStandardMaterial({ color: 0x1E293B }));
+          pad.position.y = b.height + 0.15;
+          bGroup.add(pad);
+        } else if (b.roofStyle === 'PITCHED') {
+          const roof = new THREE.Mesh(new THREE.ConeGeometry(b.width * 0.75, 2.4, 4), new THREE.MeshStandardMaterial({ color: new THREE.Color(b.roofColor) }));
+          roof.rotation.y = Math.PI / 4;
+          roof.position.y = b.height + 1.2;
+          bGroup.add(roof);
+        }
+      }
+
+      // Add Floating 3D Neon Signboard for Named Buildings
+      if (b.signName) {
+        const signGeo = new THREE.PlaneGeometry(7.0, 1.8);
+        const signMat = new THREE.MeshBasicMaterial({
+          map: createSignboardTexture(b.signName, b.accentColor),
+          transparent: true,
+          side: THREE.DoubleSide
+        });
+        const signboard = new THREE.Mesh(signGeo, signMat);
+        signboard.position.set(0, b.height + 2.5, 0);
+        bGroup.add(signboard);
       }
 
       scene.add(bGroup);
       buildingGroupMap.current.set(b.id, bGroup);
     });
 
-    // --- 8. Mouse Orbit, Pan & Raycast Click Listeners ---
+    // Raycaster for Single Click & Double Click Selection
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
+    let lastClickTime = 0;
 
     const onMouseDown = (e: MouseEvent) => {
       if (e.button === 0) {
@@ -547,32 +357,40 @@ export const CityScene: React.FC<CitySceneProps> = ({
     };
 
     const onWheel = (e: WheelEvent) => {
-      orbitState.current.distance = Math.max(14, Math.min(180, orbitState.current.distance + e.deltaY * 0.08));
+      orbitState.current.distance = Math.max(12, Math.min(180, orbitState.current.distance + e.deltaY * 0.08));
       e.preventDefault();
     };
 
-    const onClick = () => {
+    const onClick = (e: MouseEvent) => {
       if (!cameraRef.current) return;
       raycaster.setFromCamera(mouse, cameraRef.current);
 
-      // Check click against vehicles first
-      const vMeshes: THREE.Object3D[] = [];
-      vehicleGroupMap.current.forEach(vG => {
-        vG.traverse(child => { if ((child as THREE.Mesh).isMesh) vMeshes.push(child); });
+      const currentTime = performance.now();
+      const isDoubleClick = (currentTime - lastClickTime) < 300;
+      lastClickTime = currentTime;
+
+      // 1. Raycast against AI Agent characters first
+      const agentMeshes: THREE.Object3D[] = [];
+      agentMeshMap.current.forEach(agG => {
+        agG.traverse(child => { if ((child as THREE.Mesh).isMesh) agentMeshes.push(child); });
       });
-      const vHits = raycaster.intersectObjects(vMeshes);
-      if (vHits.length > 0) {
-        let curr: THREE.Object3D | null = vHits[0].object;
+      const agHits = raycaster.intersectObjects(agentMeshes);
+      if (agHits.length > 0) {
+        let curr: THREE.Object3D | null = agHits[0].object;
         while (curr && !curr.userData?.id) {
           curr = curr.parent;
         }
         if (curr?.userData?.id) {
-          onSelectEntity('VEHICLE', curr.userData.id);
+          const aId = curr.userData.id;
+          onSelectEntity('AGENT', aId);
+          if (isDoubleClick) {
+            onDoubleClickAgent(aId);
+          }
           return;
         }
       }
 
-      // Check click against buildings
+      // 2. Raycast against Buildings
       const bMeshes: THREE.Object3D[] = [];
       buildingGroupMap.current.forEach(bG => {
         bG.traverse(child => { if ((child as THREE.Mesh).isMesh) bMeshes.push(child); });
@@ -589,42 +407,52 @@ export const CityScene: React.FC<CitySceneProps> = ({
       }
     };
 
+    // Keyboard WASD listener for FPV mode
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (cameraMode === 'FPV' && selectedAgentId && onMoveAgent) {
+        const moveSpeed = 1.2;
+        if (e.key === 'w' || e.key === 'ArrowUp') onMoveAgent(selectedAgentId, 0, -moveSpeed);
+        if (e.key === 's' || e.key === 'ArrowDown') onMoveAgent(selectedAgentId, 0, moveSpeed);
+        if (e.key === 'a' || e.key === 'ArrowLeft') onMoveAgent(selectedAgentId, -moveSpeed, 0);
+        if (e.key === 'd' || e.key === 'ArrowRight') onMoveAgent(selectedAgentId, moveSpeed, 0);
+      }
+    };
+
     container.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     container.addEventListener('wheel', onWheel, { passive: false });
     container.addEventListener('click', onClick);
+    window.addEventListener('keydown', onKeyDown);
 
-    // --- 9. 60 FPS Render Loop ---
+    // 60 FPS Render Loop
     let animId: number;
     const animate = () => {
       animId = requestAnimationFrame(animate);
 
-      // Handle Camera Modes & Following
+      // Handle Camera Modes (FPV, Shoulder Cam, Orbit, Top-Down)
       const st = orbitState.current;
-      if (cameraMode === 'TOP_DOWN') {
-        camera.position.set(0, 115, 0.1);
+      const targetAgent = agentCharacters.find(a => a.id === selectedAgentId);
+
+      if (cameraMode === 'FPV' && targetAgent) {
+        // True First Person View through Agent's Eyes
+        camera.position.set(targetAgent.x, 1.85, targetAgent.z);
+        const lookX = targetAgent.x + Math.cos(targetAgent.angle) * 10;
+        const lookZ = targetAgent.z + Math.sin(targetAgent.angle) * 10;
+        camera.lookAt(lookX, 1.85, lookZ);
+      } else if (cameraMode === 'SHOULDER_CAM' && targetAgent) {
+        // Cinematic Over-the-Shoulder Tracking Cam
+        const back = 3.6;
+        const cx = targetAgent.x - Math.cos(targetAgent.angle) * back;
+        const cz = targetAgent.z - Math.sin(targetAgent.angle) * back;
+        camera.position.lerp(new THREE.Vector3(cx, 2.5, cz), 0.15);
+        camera.lookAt(targetAgent.x, 1.6, targetAgent.z);
+      } else if (cameraMode === 'TOP_DOWN') {
+        camera.position.set(0, 120, 0.1);
         camera.lookAt(0, 0, 0);
       } else if (cameraMode === 'STREET_LEVEL') {
-        camera.position.set(0, 3.0, 24);
-        camera.lookAt(0, 3.0, -30);
-      } else if (cameraMode === 'FOLLOW_VEHICLE' && selectedEntityId) {
-        // Chase Cam behind selected vehicle
-        const v = vehicles.find(item => item.id === selectedEntityId);
-        if (v) {
-          const camBack = 12;
-          const camHeight = 6.5;
-          const cx = v.x - Math.cos(v.angle) * camBack;
-          const cz = v.z - Math.sin(v.angle) * camBack;
-          camera.position.lerp(new THREE.Vector3(cx, camHeight, cz), 0.12);
-          camera.lookAt(v.x, 1.2, v.z);
-        } else {
-          // Fallback to orbit if vehicle missing
-          camera.position.x = st.target.x + st.distance * Math.sin(st.angleX) * Math.cos(st.angleY);
-          camera.position.z = st.target.z + st.distance * Math.cos(st.angleX) * Math.cos(st.angleY);
-          camera.position.y = st.target.y + st.distance * Math.sin(st.angleY);
-          camera.lookAt(st.target);
-        }
+        camera.position.set(0, 3.2, 28);
+        camera.lookAt(0, 3.2, -30);
       } else {
         // Orbit mode
         camera.position.x = st.target.x + st.distance * Math.sin(st.angleX) * Math.cos(st.angleY);
@@ -652,6 +480,7 @@ export const CityScene: React.FC<CitySceneProps> = ({
       window.removeEventListener('mouseup', onMouseUp);
       container.removeEventListener('wheel', onWheel);
       container.removeEventListener('click', onClick);
+      window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('resize', handleResize);
       if (container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
@@ -660,51 +489,108 @@ export const CityScene: React.FC<CitySceneProps> = ({
     };
   }, []);
 
-  // --- Dynamic Lighting & 24h Day/Night Sun Trajectory ---
+  // --- Dynamic AI Agent Character 3D Meshes & Speech Bubbles ---
   useEffect(() => {
-    if (!sceneRef.current || !sunLightRef.current || !ambientLightRef.current || !hemiLightRef.current) return;
+    const scene = sceneRef.current;
+    if (!scene) return;
 
-    const isDay = simulationTime >= 5.5 && simulationTime <= 19.5;
-    const dayProgress = (simulationTime - 5.5) / 14.0;
-    const sunAngle = dayProgress * Math.PI;
+    agentCharacters.forEach(ag => {
+      let aGroup = agentMeshMap.current.get(ag.id);
+      if (!aGroup) {
+        aGroup = new THREE.Group();
+        aGroup.userData = { type: 'AGENT', id: ag.id };
 
-    if (isDay) {
-      // Golden to bright day sun
-      const sunHeight = Math.sin(sunAngle) * 110;
-      const sunX = Math.cos(sunAngle) * 110;
-      sunLightRef.current.position.set(sunX, Math.max(12, sunHeight), 50);
-      sunLightRef.current.intensity = 1.35 * Math.sin(sunAngle);
-      ambientLightRef.current.intensity = 0.45 + 0.3 * Math.sin(sunAngle);
-      hemiLightRef.current.intensity = 0.4;
-      sceneRef.current.background = new THREE.Color(0x0A1124);
-      sceneRef.current.fog = new THREE.FogExp2(0x0A1124, 0.005);
-    } else {
-      // Midnight Cyber Atmosphere
-      sunLightRef.current.intensity = 0.12;
-      ambientLightRef.current.intensity = 0.22;
-      hemiLightRef.current.intensity = 0.25;
-      sceneRef.current.background = new THREE.Color(0x04060B);
-      sceneRef.current.fog = new THREE.FogExp2(0x04060B, 0.0065);
-    }
-  }, [simulationTime]);
+        // 1. Stylized 3D Cyber Body
+        const bodyGeo = new THREE.CylinderGeometry(0.35, 0.28, 1.1, 8);
+        const bodyMat = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(ag.color),
+          metalness: 0.6,
+          roughness: 0.3
+        });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.position.y = 0.95;
+        body.castShadow = true;
+        aGroup.add(body);
 
-  // --- Dynamic Traffic Signal Lighting ---
-  useEffect(() => {
-    intersections.forEach(inter => {
-      const lenses = trafficLightLenses.current.get(inter.id);
-      if (lenses) {
-        if (inter.signalState === 'NS_GREEN') {
-          (lenses.green.material as THREE.MeshBasicMaterial).color.setHex(0x10B981);
-          (lenses.red.material as THREE.MeshBasicMaterial).color.setHex(0x334155);
+        // Glowing Armor Core / Arc Reactor
+        const coreGeo = new THREE.SphereGeometry(0.12, 8, 8);
+        const coreMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
+        const core = new THREE.Mesh(coreGeo, coreMat);
+        core.position.set(0, 1.05, 0.32);
+        aGroup.add(core);
+
+        // Cyber Helmet & Glowing Visor
+        const headGeo = new THREE.SphereGeometry(0.24, 12, 12);
+        const headMat = new THREE.MeshStandardMaterial({ color: 0x1E293B, metalness: 0.8 });
+        const head = new THREE.Mesh(headGeo, headMat);
+        head.position.y = 1.7;
+        head.castShadow = true;
+        aGroup.add(head);
+
+        const visorGeo = new THREE.BoxGeometry(0.3, 0.08, 0.15);
+        const visorMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(ag.color) });
+        const visor = new THREE.Mesh(visorGeo, visorMat);
+        visor.position.set(0, 1.7, 0.2);
+        aGroup.add(visor);
+
+        // Floating Overhead Hologram Nameplate
+        const tagCanvas = document.createElement('canvas');
+        tagCanvas.width = 256; tagCanvas.height = 64;
+        const tCtx = tagCanvas.getContext('2d')!;
+        tCtx.fillStyle = '#060B18CC';
+        tCtx.roundRect(4, 4, 248, 56, 12);
+        tCtx.fill();
+        tCtx.lineWidth = 3;
+        tCtx.strokeStyle = ag.color;
+        tCtx.stroke();
+        tCtx.fillStyle = '#FFFFFF';
+        tCtx.font = 'bold 20px monospace';
+        tCtx.textAlign = 'center';
+        tCtx.textBaseline = 'middle';
+        tCtx.fillText(ag.name.split(' ')[0], 128, 32);
+
+        const tagTex = new THREE.CanvasTexture(tagCanvas);
+        const tagMesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(1.6, 0.45),
+          new THREE.MeshBasicMaterial({ map: tagTex, transparent: true, side: THREE.DoubleSide })
+        );
+        tagMesh.position.y = 2.25;
+        aGroup.add(tagMesh);
+
+        // Floating Thought/Speech Bubble Mesh
+        const bubbleMesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(3.5, 0.9),
+          new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.DoubleSide })
+        );
+        bubbleMesh.position.y = 3.0;
+        aGroup.add(bubbleMesh);
+        agentThoughtMeshMap.current.set(ag.id, bubbleMesh);
+
+        scene.add(aGroup);
+        agentMeshMap.current.set(ag.id, aGroup);
+      }
+
+      // Update position & heading angle
+      aGroup.position.set(ag.x, 0.05, ag.z);
+      aGroup.rotation.y = -ag.angle;
+
+      // Update Thought Bubble texture when speech is active
+      const bMesh = agentThoughtMeshMap.current.get(ag.id);
+      if (bMesh) {
+        if (ag.thoughtBubble) {
+          const mat = bMesh.material as THREE.MeshBasicMaterial;
+          mat.map = createThoughtTexture(ag.thoughtBubble);
+          mat.opacity = 1.0;
+          mat.needsUpdate = true;
+          bMesh.visible = true;
         } else {
-          (lenses.green.material as THREE.MeshBasicMaterial).color.setHex(0x334155);
-          (lenses.red.material as THREE.MeshBasicMaterial).color.setHex(0xEF4444);
+          bMesh.visible = false;
         }
       }
     });
-  }, [intersections]);
+  }, [agentCharacters]);
 
-  // --- Dynamic 3D Vehicles (Sedans, SUVs, Buses, Trucks, Emergency Fire Engines) ---
+  // --- Dynamic Vehicles ---
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
@@ -715,169 +601,20 @@ export const CityScene: React.FC<CitySceneProps> = ({
         vGroup = new THREE.Group();
         vGroup.userData = { type: 'VEHICLE', id: v.id };
 
-        if (v.type === 'BUS') {
-          // Transit Bus (Longer, dual windshield)
-          const busGeo = new THREE.BoxGeometry(4.2, 1.4, 1.6);
-          const busMat = new THREE.MeshStandardMaterial({ color: 0xF59E0B, roughness: 0.3, metalness: 0.6 });
-          const busBody = new THREE.Mesh(busGeo, busMat);
-          busBody.position.y = 0.75;
-          vGroup.add(busBody);
-
-          // Glass strip
-          const glassGeo = new THREE.BoxGeometry(3.9, 0.45, 1.65);
-          const glassMat = new THREE.MeshStandardMaterial({ color: 0x0F172A, roughness: 0.1 });
-          const glass = new THREE.Mesh(glassGeo, glassMat);
-          glass.position.y = 0.95;
-          vGroup.add(glass);
-
-        } else if (v.type === 'FIRE_TRUCK') {
-          // Fire Engine (Red, top ladder, emergency flashers)
-          const fireGeo = new THREE.BoxGeometry(3.8, 1.5, 1.55);
-          const fireMat = new THREE.MeshStandardMaterial({ color: 0xEF4444, roughness: 0.2, metalness: 0.7 });
-          const fireBody = new THREE.Mesh(fireGeo, fireMat);
-          fireBody.position.y = 0.8;
-          vGroup.add(fireBody);
-
-          // Top rescue ladder
-          const ladderGeo = new THREE.BoxGeometry(2.8, 0.18, 0.7);
-          const ladderMat = new THREE.MeshStandardMaterial({ color: 0xE2E8F0, metalness: 0.9 });
-          const ladder = new THREE.Mesh(ladderGeo, ladderMat);
-          ladder.position.set(0, 1.65, 0);
-          vGroup.add(ladder);
-
-          // Dual red/blue strobe beacons
-          const redB = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.3), new THREE.MeshBasicMaterial({ color: 0xEF4444 }));
-          redB.position.set(1.2, 1.65, 0.4);
-          vGroup.add(redB);
-          const blueB = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.3), new THREE.MeshBasicMaterial({ color: 0x3B82F6 }));
-          blueB.position.set(1.2, 1.65, -0.4);
-          vGroup.add(blueB);
-
-        } else if (v.type === 'TRUCK') {
-          // Delivery Semi / Box Truck
-          const cabGeo = new THREE.BoxGeometry(1.4, 1.2, 1.5);
-          const cabMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(v.color), roughness: 0.3 });
-          const cab = new THREE.Mesh(cabGeo, cabMat);
-          cab.position.set(0.9, 0.65, 0);
-          vGroup.add(cab);
-
-          const boxGeo = new THREE.BoxGeometry(2.4, 1.5, 1.5);
-          const boxMat = new THREE.MeshStandardMaterial({ color: 0xCBD5E1, roughness: 0.6 });
-          const box = new THREE.Mesh(boxGeo, boxMat);
-          box.position.set(-0.8, 0.85, 0);
-          vGroup.add(box);
-
-        } else {
-          // Passenger Sedan / SUV
-          const carGeo = new THREE.BoxGeometry(2.0, 0.7, 1.1);
-          const carMat = new THREE.MeshStandardMaterial({
-            color: new THREE.Color(v.color),
-            roughness: 0.25,
-            metalness: 0.75
-          });
-          const carBody = new THREE.Mesh(carGeo, carMat);
-          carBody.position.y = 0.42;
-          vGroup.add(carBody);
-
-          // Cabin windshield
-          const cabinGeo = new THREE.BoxGeometry(1.0, 0.45, 0.95);
-          const cabinMat = new THREE.MeshStandardMaterial({ color: 0x0F172A, roughness: 0.1 });
-          const cabin = new THREE.Mesh(cabinGeo, cabinMat);
-          cabin.position.set(-0.1, 0.85, 0);
-          vGroup.add(cabin);
-
-          // Headlights
-          const hlGeo = new THREE.SphereGeometry(0.08, 6, 6);
-          const hlMat = new THREE.MeshBasicMaterial({ color: 0xFEF08A });
-          const hlLeft = new THREE.Mesh(hlGeo, hlMat);
-          hlLeft.position.set(1.0, 0.4, 0.35);
-          const hlRight = new THREE.Mesh(hlGeo, hlMat);
-          hlRight.position.set(1.0, 0.4, -0.35);
-          vGroup.add(hlLeft);
-          vGroup.add(hlRight);
-        }
+        const carGeo = new THREE.BoxGeometry(2.0, 0.7, 1.1);
+        const carMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(v.color), roughness: 0.3 });
+        const car = new THREE.Mesh(carGeo, carMat);
+        car.position.y = 0.42;
+        vGroup.add(car);
 
         scene.add(vGroup);
         vehicleGroupMap.current.set(v.id, vGroup);
       }
 
-      // Update position & rotation
       vGroup.position.set(v.x, 0.05, v.z);
       vGroup.rotation.y = -v.angle;
     });
   }, [vehicles]);
-
-  // --- Dynamic Pedestrian Dots/Figures ---
-  useEffect(() => {
-    const scene = sceneRef.current;
-    if (!scene || !pedestrians.length) return;
-
-    pedestrians.forEach(ped => {
-      let pGroup = pedestrianGroupMap.current.get(ped.id);
-      if (!pGroup) {
-        pGroup = new THREE.Group();
-        // Stylized pedestrian capsule
-        const bodyGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.65, 6);
-        const bodyMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(ped.color), roughness: 0.5 });
-        const body = new THREE.Mesh(bodyGeo, bodyMat);
-        body.position.y = 0.45;
-        pGroup.add(body);
-
-        const headGeo = new THREE.SphereGeometry(0.15, 6, 6);
-        const headMat = new THREE.MeshStandardMaterial({ color: 0xFDE047 });
-        const head = new THREE.Mesh(headGeo, headMat);
-        head.position.y = 0.9;
-        pGroup.add(head);
-
-        scene.add(pGroup);
-        pedestrianGroupMap.current.set(ped.id, pGroup);
-      }
-
-      pGroup.position.set(ped.x, 0.08, ped.z);
-    });
-  }, [pedestrians]);
-
-  // --- Dynamic Visual Overlays ---
-  useEffect(() => {
-    // 1. Traffic Congestion Overlay
-    roads.forEach(r => {
-      const mesh = roadMeshMap.current.get(r.id);
-      if (mesh) {
-        const mat = mesh.material as THREE.MeshStandardMaterial;
-        if (overlayMode === 'TRAFFIC') {
-          if (r.isClosed) mat.color.setHex(0x7F1D1D); // deep red closed
-          else if (r.density > 0.5) mat.color.setHex(0xEF4444); // red bottleneck
-          else if (r.density > 0.2) mat.color.setHex(0xF59E0B); // amber medium
-          else mat.color.setHex(0x10B981); // green free flow
-        } else {
-          mat.color.setHex(r.isClosed ? 0x450A0A : 0x161D2B);
-        }
-      }
-    });
-
-    // 2. Power / Zoning Overlays on Buildings
-    buildings.forEach(b => {
-      const group = buildingGroupMap.current.get(b.id);
-      if (group) {
-        group.traverse(child => {
-          if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).material) {
-            const mat = (child as THREE.Mesh).material as THREE.MeshStandardMaterial;
-            if (overlayMode === 'POWER') {
-              mat.color.setHex(b.powerSupplied ? 0x2563EB : 0x1E293B);
-            } else if (overlayMode === 'ZONING') {
-              if (b.zone === 'COMMERCIAL') mat.color.setHex(0x8B5CF6);
-              else if (b.zone === 'RESIDENTIAL') mat.color.setHex(0x10B981);
-              else if (b.zone === 'INDUSTRIAL') mat.color.setHex(0xF59E0B);
-              else if (b.zone === 'PARK') mat.color.setHex(0x15803D);
-              else mat.color.setHex(0x06B6D4);
-            } else if (b.onFire) {
-              mat.color.setHex(0xDC2626); // active fire alert
-            }
-          }
-        });
-      }
-    });
-  }, [overlayMode, roads, buildings]);
 
   return (
     <div className="relative w-full h-full">

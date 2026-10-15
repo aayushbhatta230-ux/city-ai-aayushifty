@@ -18,8 +18,8 @@ export type AgentRoleType =
   | 'ECONOMY' 
   | 'WELFARE';
 
-export type CameraMode = 'ORBIT' | 'TOP_DOWN' | 'STREET_LEVEL' | 'FOLLOW_VEHICLE';
-export type OverlayMode = 'NONE' | 'TRAFFIC' | 'POWER' | 'WATER' | 'ZONING' | 'SAFETY';
+export type CameraMode = 'ORBIT' | 'TOP_DOWN' | 'STREET_LEVEL' | 'FOLLOW_VEHICLE' | 'FPV' | 'SHOULDER_CAM';
+export type OverlayMode = 'NONE' | 'TRAFFIC' | 'POWER' | 'WATER' | 'ZONING' | 'SAFETY' | 'AGENT_PATHS';
 
 export interface Building {
   id: string;
@@ -50,6 +50,48 @@ export interface Building {
   constructionProgress?: number; // 0 - 100
   onFire?: boolean;
   health: number; // 0 - 100
+  signName?: string; // Floating architectural signboard name
+  department?: string;
+}
+
+export interface AgentCharacter {
+  id: string;
+  role: AgentRoleType;
+  name: string;
+  title: string;
+  department: string;
+  color: string;
+  x: number;
+  z: number;
+  targetX: number;
+  targetZ: number;
+  speed: number;
+  angle: number;
+  homeBuildingId: string;
+  currentBuildingId?: string;
+  currentTask: string;
+  assignedTasks: string[];
+  status: 'IDLE' | 'WALKING' | 'THINKING' | 'CODING' | 'TESTING' | 'DEPLOYING' | 'COLLABORATING';
+  currentThought: string;
+  thoughtBubble?: string;
+  speechTimer?: number;
+  avatarIcon: string;
+  level: number;
+  skills: string[];
+  toolsInUse: string[];
+  isFPVActive?: boolean;
+}
+
+export interface UnitedProject {
+  id: string;
+  title: string;
+  description: string;
+  status: 'PLANNING' | 'ARCHITECTING' | 'IMPLEMENTING' | 'TESTING' | 'VERIFYING' | 'COMPLETED';
+  progress: number; // 0 - 100%
+  activeAgentId: string;
+  startedAt: string;
+  deliverables: string[];
+  stageLogs: { timestamp: string; agentName: string; message: string; step: string }[];
 }
 
 export interface RoadSegment {

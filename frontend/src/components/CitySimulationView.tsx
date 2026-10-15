@@ -6,6 +6,7 @@ import { CityHUD } from './city3d/CityHUD';
 import { 
   Building, 
   Vehicle,
+  AgentCharacter,
   CameraMode, 
   OverlayMode, 
   ScenarioType, 
@@ -26,9 +27,13 @@ export const CitySimulationView: React.FC = () => {
   const [cameraMode, setCameraMode] = useState<CameraMode>('ORBIT');
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('NONE');
 
-  const [selectedEntity, setSelectedEntity] = useState<{ type: 'BUILDING' | 'VEHICLE' | 'INCIDENT'; id: string } | null>(null);
+  const [selectedEntity, setSelectedEntity] = useState<{ type: 'BUILDING' | 'VEHICLE' | 'AGENT'; id: string } | null>(null);
   const [selectedBuilding, setSelectedBuilding] = useState<Building | null>(null);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<AgentCharacter | null>(null);
+
+  const [agentCharacters, setAgentCharacters] = useState<AgentCharacter[]>(engineRef.current.agentCharacters);
+  const [activeUnitedProject, setActiveUnitedProject] = useState(engineRef.current.activeUnitedProject);
 
   const [agents, setAgents] = useState<AgentObservation[]>(
     Array.from(councilRef.current.agents.values())
@@ -53,7 +58,7 @@ export const CitySimulationView: React.FC = () => {
       engine.tick(delta);
       tickAccumulator += delta;
 
-      // Agent Council evaluates every 1.5 seconds (or accelerated by simulationSpeed)
+      // Agent Council evaluates every 1.5 seconds
       if (tickAccumulator >= 1.5 / Math.max(1, engine.simulationSpeed)) {
         tickAccumulator = 0;
         council.evaluateAndAct(engine);
@@ -65,11 +70,16 @@ export const CitySimulationView: React.FC = () => {
       if (engine.tickCount % 5 === 0) {
         setMetrics({ ...engine.metrics });
         setSimulationTime(engine.simulationTime);
+        setAgentCharacters([...engine.agentCharacters]);
+        setActiveUnitedProject(engine.activeUnitedProject ? { ...engine.activeUnitedProject } : null);
 
-        // Keep vehicle telemetry up to date if selected
+        // Keep entity telemetry up to date if selected
         if (selectedEntity?.type === 'VEHICLE') {
           const v = engine.vehicles.find(item => item.id === selectedEntity.id);
           if (v) setSelectedVehicle({ ...v });
+        } else if (selectedEntity?.type === 'AGENT') {
+          const ag = engine.agentCharacters.find(item => item.id === selectedEntity.id);
+          if (ag) setSelectedAgent({ ...ag });
         }
       }
     };
@@ -78,19 +88,28 @@ export const CitySimulationView: React.FC = () => {
     return () => cancelAnimationFrame(animId);
   }, [selectedEntity]);
 
-  // Update selected entity inspector (Building or Vehicle)
+  // Update selected entity inspector (Building, Vehicle, or Agent)
   useEffect(() => {
+    const engine = engineRef.current;
     if (selectedEntity?.type === 'BUILDING') {
-      const b = engineRef.current.buildings.find(item => item.id === selectedEntity.id) || null;
+      const b = engine.buildings.find(item => item.id === selectedEntity.id) || null;
       setSelectedBuilding(b);
       setSelectedVehicle(null);
+      setSelectedAgent(null);
     } else if (selectedEntity?.type === 'VEHICLE') {
-      const v = engineRef.current.vehicles.find(item => item.id === selectedEntity.id) || null;
+      const v = engine.vehicles.find(item => item.id === selectedEntity.id) || null;
       setSelectedVehicle(v);
       setSelectedBuilding(null);
+      setSelectedAgent(null);
+    } else if (selectedEntity?.type === 'AGENT') {
+      const ag = engine.agentCharacters.find(item => item.id === selectedEntity.id) || null;
+      setSelectedAgent(ag);
+      setSelectedBuilding(null);
+      setSelectedVehicle(null);
     } else {
       setSelectedBuilding(null);
       setSelectedVehicle(null);
+      setSelectedAgent(null);
     }
   }, [selectedEntity]);
 
@@ -104,10 +123,50 @@ export const CitySimulationView: React.FC = () => {
     engineRef.current.loadScenario(scen);
     setActiveScenario(scen);
     setMetrics({ ...engineRef.current.metrics });
+    setAgentCharacters([...engineRef.current.agentCharacters]);
   };
 
-  const handleSelectEntity = (type: 'BUILDING' | 'VEHICLE' | 'INCIDENT', id: string) => {
+  const handleSelectEntity = (type: 'BUILDING' | 'VEHICLE' | 'AGENT', id: string) => {
     setSelectedEntity({ type, id });
+  };
+
+  const handleDoubleClickAgent = (agentId: string) => {
+    const ag = engineRef.current.agentCharacters.find(a => a.id === agentId);
+    if (ag) {
+      setSelectedEntity({ type: 'AGENT', id: agentId });
+      setSelectedAgent({ ...ag });
+    }
+  };
+
+  const handleEnterAgentFPV = (agentId: string) => {
+    const ag = engineRef.current.agentCharacters.find(a => a.id === agentId);
+    if (ag) {
+      setSelectedEntity({ type: 'AGENT', id: agentId });
+      setSelectedAgent({ ...ag });
+    }
+  };
+
+  const handleDeployUnitedProject = (title: string, desc: string) => {
+    const proj = engineRef.current.deployUnitedProject(title, desc);
+    setActiveUnitedProject({ ...proj });
+    setMetrics({ ...engineRef.current.metrics });
+  };
+
+  const handleAssignTaskToAgent = (agentId: string, task: string) => {
+    engineRef.current.assignTaskToAgent(agentId, task);
+    setAgentCharacters([...engineRef.current.agentCharacters]);
+    const ag = engineRef.current.agentCharacters.find(a => a.id === agentId);
+    if (ag) setSelectedAgent({ ...ag });
+  };
+
+  const handleMoveAgent = (agentId: string, dx: number, dz: number) => {
+    const ag = engineRef.current.agentCharacters.find(a => a.id === agentId);
+    if (ag) {
+      ag.x += dx;
+      ag.z += dz;
+      ag.targetX = ag.x;
+      ag.targetZ = ag.z;
+    }
   };
 
   const handleTriggerIntervention = (action: string) => {
@@ -121,13 +180,6 @@ export const CitySimulationView: React.FC = () => {
     }
   };
 
-  const handleToggleRoadClosure = () => {
-    if (engineRef.current.roads.length > 0) {
-      engineRef.current.toggleRoadClosure(engineRef.current.roads[0].id);
-      setMetrics({ ...engineRef.current.metrics });
-    }
-  };
-
   return (
     <div className="relative w-full h-[calc(100vh-65px)] overflow-hidden bg-[#06080E]">
       {/* 3D WebGL Three.js City World */}
@@ -137,18 +189,24 @@ export const CitySimulationView: React.FC = () => {
         intersections={engineRef.current.intersections}
         vehicles={engineRef.current.vehicles}
         pedestrians={engineRef.current.pedestrians}
+        agentCharacters={agentCharacters}
         incidents={engineRef.current.incidents}
         simulationTime={simulationTime}
         cameraMode={cameraMode}
         overlayMode={overlayMode}
         selectedEntityId={selectedEntity?.id || null}
+        selectedAgentId={selectedAgent?.id || null}
         onSelectEntity={handleSelectEntity}
+        onDoubleClickAgent={handleDoubleClickAgent}
+        onMoveAgent={handleMoveAgent}
       />
 
       {/* Overseer Control Center & HUD */}
       <CityHUD
         metrics={metrics}
         agents={agents}
+        agentCharacters={agentCharacters}
+        activeUnitedProject={activeUnitedProject}
         events={events}
         simulationTime={simulationTime}
         simulationSpeed={simulationSpeed}
@@ -157,12 +215,16 @@ export const CitySimulationView: React.FC = () => {
         overlayMode={overlayMode}
         selectedBuilding={selectedBuilding}
         selectedVehicle={selectedVehicle}
+        selectedAgent={selectedAgent}
         onSetSpeed={handleSetSpeed}
         onSelectScenario={handleSelectScenario}
         onSelectCameraMode={setCameraMode}
         onSelectOverlayMode={setOverlayMode}
         onTriggerIntervention={handleTriggerIntervention}
-        onToggleRoadClosure={handleToggleRoadClosure}
+        onDeployUnitedProject={handleDeployUnitedProject}
+        onAssignTaskToAgent={handleAssignTaskToAgent}
+        onCloseAgentModal={() => setSelectedAgent(null)}
+        onEnterAgentFPV={handleEnterAgentFPV}
       />
     </div>
   );

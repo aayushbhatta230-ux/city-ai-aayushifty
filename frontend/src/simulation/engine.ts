@@ -4,14 +4,16 @@ import {
   Intersection, 
   Vehicle, 
   Citizen, 
-  Pedestrian,
+  Pedestrian, 
   Incident, 
   CityMetrics, 
   ScenarioType, 
   ZoneType, 
-  BuildingType,
-  VehicleType,
-  RoofStyle
+  BuildingType, 
+  RoofStyle,
+  AgentCharacter,
+  UnitedProject,
+  AgentRoleType
 } from './types';
 
 export class CitySimulationEngine {
@@ -24,7 +26,13 @@ export class CitySimulationEngine {
   public incidents: Incident[] = [];
   public metrics: CityMetrics;
 
-  public simulationTime: number = 8.5; // 0.0 - 24.0 (Hour of day)
+  // The 8 Living Autonomous AI Agents
+  public agentCharacters: AgentCharacter[] = [];
+  public activeUnitedProject: UnitedProject | null = null;
+  public selectedAgentId: string | null = null;
+  public fpvAgentId: string | null = null;
+
+  public simulationTime: number = 9.0; // 0.0 - 24.0 (Hour of day)
   public simulationSpeed: number = 1.0; // 0 = paused, 1 = normal, 2 = fast, 5 = ultra
   public tickCount: number = 0;
   public activeScenario: ScenarioType = 'BALANCED_METROPOLIS';
@@ -32,26 +40,27 @@ export class CitySimulationEngine {
   constructor() {
     this.metrics = this.createDefaultMetrics();
     this.generateCityLayout();
+    this.initAIAgentCharacters();
   }
 
   private createDefaultMetrics(): CityMetrics {
     return {
-      population: 2450,
-      employmentRate: 94.8,
-      avgCommuteTime: 16.2,
-      trafficCongestion: 14.0,
-      powerProduction: 280.0,
-      powerDemand: 210.0,
+      population: 3200,
+      employmentRate: 96.5,
+      avgCommuteTime: 14.8,
+      trafficCongestion: 12.0,
+      powerProduction: 320.0,
+      powerDemand: 240.0,
       powerGridStatus: 100.0,
-      waterSupply: 3400.0,
-      waterDemand: 2650.0,
+      waterSupply: 4200.0,
+      waterDemand: 3100.0,
       waterGridStatus: 100.0,
-      treasury: 620000,
-      incomeRate: 480,
-      expenseRate: 260,
-      citizenSatisfaction: 89.0,
+      treasury: 750000,
+      incomeRate: 520,
+      expenseRate: 280,
+      citizenSatisfaction: 92.0,
       activeIncidentsCount: 0,
-      carbonIndex: 24.0
+      carbonIndex: 21.0
     };
   }
 
@@ -64,12 +73,12 @@ export class CitySimulationEngine {
     this.pedestrians = [];
     this.incidents = [];
 
-    // --- 1. Generate 6x6 Connected Road Network ---
+    // 1. Generate 6x6 Connected Road Network
     const gridSize = 5; // 6 avenues x 6 streets (5 blocks across)
-    const spacing = 26; // Distance between avenues in meters
+    const spacing = 28; // Distance between avenues
     const offset = (gridSize * spacing) / 2;
 
-    // Intersections with traffic lights
+    // Intersections
     for (let r = 0; r <= gridSize; r++) {
       for (let c = 0; c <= gridSize; c++) {
         const x = c * spacing - offset;
@@ -80,12 +89,12 @@ export class CitySimulationEngine {
           z,
           signalState: (r + c) % 2 === 0 ? 'NS_GREEN' : 'EW_GREEN',
           greenDuration: 7.5,
-          timer: ((r * 1.7) + (c * 2.3)) % 7.5
+          timer: ((r * 1.5) + (c * 2.2)) % 7.5
         });
       }
     }
 
-    // East-West Avenues
+    // East-West Roads
     for (let r = 0; r <= gridSize; r++) {
       for (let c = 0; c < gridSize; c++) {
         const x1 = c * spacing - offset;
@@ -94,7 +103,7 @@ export class CitySimulationEngine {
         const z2 = r * spacing - offset;
         this.roads.push({
           id: `road-ew-${r}-${c}`,
-          name: `Avenue ${r + 1} E-W (Sec ${c + 1})`,
+          name: `Avenue ${r + 1} E-W`,
           start: [x1, z1],
           end: [x2, z2],
           lanes: 2,
@@ -106,7 +115,7 @@ export class CitySimulationEngine {
       }
     }
 
-    // North-South Streets
+    // North-South Roads
     for (let c = 0; c <= gridSize; c++) {
       for (let r = 0; r < gridSize; r++) {
         const x1 = c * spacing - offset;
@@ -115,7 +124,7 @@ export class CitySimulationEngine {
         const z2 = (r + 1) * spacing - offset;
         this.roads.push({
           id: `road-ns-${c}-${r}`,
-          name: `Street ${c + 1} N-S (Sec ${r + 1})`,
+          name: `Street ${c + 1} N-S`,
           start: [x1, z1],
           end: [x2, z2],
           lanes: 2,
@@ -127,331 +136,620 @@ export class CitySimulationEngine {
       }
     }
 
-    // --- 2. Procedural City Blocks & Architectural Neighborhoods ---
-    let bId = 1;
+    // 2. Named AI Department Headquarters & Urban Blocks
+    // Landmark 1: Central Innovation Plaza (Center: 0, 0)
+    this.buildings.push({
+      id: 'bld-park',
+      name: 'Central Innovation Plaza & AI Forum',
+      signName: 'INNOVATION PLAZA',
+      department: 'Multi-Agent Collective Forum',
+      zone: 'PARK',
+      type: 'PARK_SPACE',
+      x: 0,
+      z: 0,
+      width: 22,
+      depth: 22,
+      height: 0.5,
+      floors: 1,
+      roofStyle: 'FLAT',
+      facadeColor: '#15803D',
+      color: '#15803D',
+      roofColor: '#166534',
+      accentColor: '#38BDF8',
+      residents: 0,
+      maxResidents: 0,
+      workers: 25,
+      maxWorkers: 50,
+      powerDemand: 12,
+      powerSupplied: true,
+      waterDemand: 250,
+      waterSupplied: true,
+      wasteAccumulated: 2,
+      health: 100
+    });
+
+    // Landmark 2: Citadel Spire (Master Orchestrator HQ)
+    this.buildings.push({
+      id: 'bld-citadel',
+      name: 'Citadel Spire (Executive Orchestrator)',
+      signName: 'CITADEL SPIRE',
+      department: 'Executive Master Orchestration',
+      zone: 'COMMERCIAL',
+      type: 'SKYSCRAPER',
+      x: 0,
+      z: -28,
+      width: 11,
+      depth: 11,
+      height: 42,
+      floors: 14,
+      roofStyle: 'ANTENNA',
+      facadeColor: '#0F172A',
+      color: '#0F172A',
+      roofColor: '#1E293B',
+      accentColor: '#38BDF8',
+      residents: 0,
+      maxResidents: 0,
+      workers: 240,
+      maxWorkers: 350,
+      powerDemand: 45,
+      powerSupplied: true,
+      waterDemand: 420,
+      waterSupplied: true,
+      wasteAccumulated: 10,
+      health: 100
+    });
+
+    // Landmark 3: Product Vision Lab (Analyst HQ)
+    this.buildings.push({
+      id: 'bld-vision-lab',
+      name: 'Product Vision Lab (Requirements & PRD)',
+      signName: 'VISION LAB',
+      department: 'Product Strategy & User Stories',
+      zone: 'COMMERCIAL',
+      type: 'SKYSCRAPER',
+      x: 28,
+      z: 0,
+      width: 9.5,
+      depth: 9.5,
+      height: 32,
+      floors: 10,
+      roofStyle: 'HELIPAD',
+      facadeColor: '#581C87',
+      color: '#581C87',
+      roofColor: '#3B0764',
+      accentColor: '#C084FC',
+      residents: 0,
+      maxResidents: 0,
+      workers: 180,
+      maxWorkers: 250,
+      powerDemand: 30,
+      powerSupplied: true,
+      waterDemand: 310,
+      waterSupplied: true,
+      wasteAccumulated: 12,
+      health: 100
+    });
+
+    // Landmark 4: Software Blueprint Complex (Architect HQ)
+    this.buildings.push({
+      id: 'bld-blueprint',
+      name: 'Blueprint Complex (Software Architecture)',
+      signName: 'BLUEPRINT COMPLEX',
+      department: 'System Architecture & Schema Design',
+      zone: 'COMMERCIAL',
+      type: 'SKYSCRAPER',
+      x: 28,
+      z: -28,
+      width: 10,
+      depth: 10,
+      height: 36,
+      floors: 12,
+      roofStyle: 'FLAT',
+      facadeColor: '#1E3A8A',
+      color: '#1E3A8A',
+      roofColor: '#172554',
+      accentColor: '#60A5FA',
+      residents: 0,
+      maxResidents: 0,
+      workers: 210,
+      maxWorkers: 300,
+      powerDemand: 38,
+      powerSupplied: true,
+      waterDemand: 360,
+      waterSupplied: true,
+      wasteAccumulated: 15,
+      health: 100
+    });
+
+    // Landmark 5: Fabrication Foundry (Implementation & Coding)
+    this.buildings.push({
+      id: 'bld-foundry',
+      name: 'Fabrication Foundry (Code Synthesis)',
+      signName: 'FABRICATION FOUNDRY',
+      department: 'Full-Stack Implementation & AST',
+      zone: 'INDUSTRIAL',
+      type: 'FACTORY',
+      x: -28,
+      z: 28,
+      width: 11,
+      depth: 10,
+      height: 22,
+      floors: 6,
+      roofStyle: 'CHIMNEY',
+      facadeColor: '#78350F',
+      color: '#78350F',
+      roofColor: '#451A03',
+      accentColor: '#F59E0B',
+      residents: 0,
+      maxResidents: 0,
+      workers: 160,
+      maxWorkers: 220,
+      powerDemand: 52,
+      powerSupplied: true,
+      waterDemand: 450,
+      waterSupplied: true,
+      wasteAccumulated: 18,
+      health: 100
+    });
+
+    // Landmark 6: Quality Assurance Bastion (Testing & Pytest)
+    this.buildings.push({
+      id: 'bld-qa-bastion',
+      name: 'Quality Assurance Bastion (Testing & CI)',
+      signName: 'QA BASTION',
+      department: 'Automated Verification & Pytest Suite',
+      zone: 'PUBLIC',
+      type: 'OFFICE_TOWER',
+      x: -28,
+      z: -28,
+      width: 9.5,
+      depth: 9.5,
+      height: 28,
+      floors: 9,
+      roofStyle: 'ANTENNA',
+      facadeColor: '#065F46',
+      color: '#065F46',
+      roofColor: '#064E3B',
+      accentColor: '#34D399',
+      residents: 0,
+      maxResidents: 0,
+      workers: 140,
+      maxWorkers: 200,
+      powerDemand: 32,
+      powerSupplied: true,
+      waterDemand: 280,
+      waterSupplied: true,
+      wasteAccumulated: 8,
+      health: 100
+    });
+
+    // Landmark 7: Diagnostic Core (Debugging & RCA)
+    this.buildings.push({
+      id: 'bld-diagnostic',
+      name: 'Diagnostic Core (Debugging & Troubleshooting)',
+      signName: 'DIAGNOSTIC CORE',
+      department: 'Traceback Root Cause Analysis & Fixes',
+      zone: 'COMMERCIAL',
+      type: 'OFFICE_TOWER',
+      x: -28,
+      z: 0,
+      width: 9,
+      depth: 9,
+      height: 24,
+      floors: 8,
+      roofStyle: 'FLAT',
+      facadeColor: '#831843',
+      color: '#831843',
+      roofColor: '#500724',
+      accentColor: '#F472B6',
+      residents: 0,
+      maxResidents: 0,
+      workers: 110,
+      maxWorkers: 160,
+      powerDemand: 28,
+      powerSupplied: true,
+      waterDemand: 220,
+      waterSupplied: true,
+      wasteAccumulated: 6,
+      health: 100
+    });
+
+    // Landmark 8: Security Citadel & Vault (Security Sentinel)
+    this.buildings.push({
+      id: 'bld-security',
+      name: 'Security Citadel (Policy & Sandbox Vault)',
+      signName: 'SECURITY CITADEL',
+      department: 'Security Review, Sandboxing & Secrets',
+      zone: 'PUBLIC',
+      type: 'OFFICE_TOWER',
+      x: 0,
+      z: 28,
+      width: 10.5,
+      depth: 10.5,
+      height: 30,
+      floors: 10,
+      roofStyle: 'HELIPAD',
+      facadeColor: '#7F1D1D',
+      color: '#7F1D1D',
+      roofColor: '#450A0A',
+      accentColor: '#EF4444',
+      residents: 0,
+      maxResidents: 0,
+      workers: 130,
+      maxWorkers: 190,
+      powerDemand: 34,
+      powerSupplied: true,
+      waterDemand: 290,
+      waterSupplied: true,
+      wasteAccumulated: 9,
+      health: 100
+    });
+
+    // Landmark 9: Cloud Release Dock & DevOps Terminal
+    this.buildings.push({
+      id: 'bld-release-dock',
+      name: 'Cloud Release Dock (Deployment & DevOps)',
+      signName: 'RELEASE DOCK',
+      department: 'Containerization, Deploy & Infrastructure',
+      zone: 'INDUSTRIAL',
+      type: 'WAREHOUSE',
+      x: 28,
+      z: 28,
+      width: 11,
+      depth: 10,
+      height: 20,
+      floors: 5,
+      roofStyle: 'FLAT',
+      facadeColor: '#164E63',
+      color: '#164E63',
+      roofColor: '#083344',
+      accentColor: '#22D3EE',
+      residents: 0,
+      maxResidents: 0,
+      workers: 120,
+      maxWorkers: 170,
+      powerDemand: 40,
+      powerSupplied: true,
+      waterDemand: 340,
+      waterSupplied: true,
+      wasteAccumulated: 14,
+      health: 100
+    });
+
+    // Landmark 10: Civic Mainframe Data Center
+    this.buildings.push({
+      id: 'bld-datacenter',
+      name: 'Civic Mainframe & Server Farm',
+      signName: 'DATA CENTER',
+      department: 'Persistent SQLite & Vector Store',
+      zone: 'PUBLIC',
+      type: 'SILO',
+      x: -56,
+      z: 0,
+      width: 12,
+      depth: 10,
+      height: 18,
+      floors: 4,
+      roofStyle: 'FLAT',
+      facadeColor: '#334155',
+      color: '#334155',
+      roofColor: '#1E293B',
+      accentColor: '#94A3B8',
+      residents: 0,
+      maxResidents: 0,
+      workers: 40,
+      maxWorkers: 80,
+      powerDemand: 60,
+      powerSupplied: true,
+      waterDemand: 200,
+      waterSupplied: true,
+      wasteAccumulated: 5,
+      health: 100
+    });
+
+    // Add varied residential, commercial, and suburban housing blocks around perimeter
+    let bCount = 11;
     for (let r = 0; r < gridSize; r++) {
       for (let c = 0; c < gridSize; c++) {
-        const blockCenterX = (c + 0.5) * spacing - offset;
-        const blockCenterZ = (r + 0.5) * spacing - offset;
+        const bx = (c + 0.5) * spacing - offset;
+        const bz = (r + 0.5) * spacing - offset;
 
-        // Determine District Zone
-        let zone: ZoneType = 'RESIDENTIAL';
-        if (c >= 2 && c <= 3 && r >= 2 && r <= 3) {
-          zone = (c === 2 && r === 2) ? 'PARK' : 'COMMERCIAL'; // Central Park + Downtown
-        } else if (c >= 3 && r >= 1 && r <= 3) {
-          zone = 'COMMERCIAL'; // Financial District
-        } else if (c <= 1 && r >= 3) {
-          zone = 'INDUSTRIAL'; // Industrial Port & Logistics
-        } else if (c === 1 && r === 2) {
-          zone = 'PUBLIC'; // Civic Center (Hospital, Fire Station, School)
-        } else if (r <= 1 && c <= 1) {
-          zone = 'RESIDENTIAL'; // Suburban residential
-        } else {
-          zone = 'RESIDENTIAL'; // Urban apartments
-        }
+        // Skip coordinates close to landmarks
+        const isNearLandmark = this.buildings.some(b => 
+          Math.abs(b.x - bx) < 14 && Math.abs(b.z - bz) < 14
+        );
+        if (isNearLandmark) continue;
 
-        // Special Block 1: Central Park
-        if (zone === 'PARK') {
-          this.buildings.push({
-            id: `bld-park`,
-            name: 'Central Eco-Plaza & Botanical Park',
-            zone: 'PARK',
-            type: 'PARK_SPACE',
-            x: blockCenterX,
-            z: blockCenterZ,
-            width: 20,
-            depth: 20,
-            height: 0.4,
-            floors: 1,
-            roofStyle: 'FLAT',
-            facadeColor: '#15803D',
-            color: '#15803D',
-            roofColor: '#166534',
-            accentColor: '#38BDF8',
-            residents: 0,
-            maxResidents: 0,
-            workers: 12,
-            maxWorkers: 20,
-            powerDemand: 8,
-            powerSupplied: true,
-            waterDemand: 220,
-            waterSupplied: true,
-            wasteAccumulated: 4,
-            health: 100
-          });
-          continue;
-        }
+        const isSuburban = (r <= 1 && c <= 1);
+        const bType: BuildingType = isSuburban ? 'HOUSE' : 'APARTMENT';
+        const height = isSuburban ? 4.5 : (10 + (bCount % 8) * 2);
 
-        // Subdivide each block into 4 distinct building plots with setbacks
-        const subPlots = [
-          { dx: -6.5, dz: -6.5, plotIdx: 0 },
-          { dx: 6.5, dz: -6.5, plotIdx: 1 },
-          { dx: -6.5, dz: 6.5, plotIdx: 2 },
-          { dx: 6.5, dz: 6.5, plotIdx: 3 }
-        ];
-
-        subPlots.forEach(({ dx, dz, plotIdx }) => {
-          const bx = blockCenterX + dx;
-          const bz = blockCenterZ + dz;
-          let bType: BuildingType = 'APARTMENT';
-          let height = 12;
-          let width = 8.5;
-          let depth = 8.5;
-          let floors = 4;
-          let roofStyle: RoofStyle = 'FLAT';
-          let facadeColor = '#3B82F6';
-          let roofColor = '#1E293B';
-          let accentColor = '#60A5FA';
-          let residents = 60;
-          let workers = 0;
-          let underConstruction = false;
-          let constructionProgress = 100;
-
-          if (zone === 'COMMERCIAL') {
-            // Downtown Skyscraper or Office Tower
-            if (plotIdx === 0 || plotIdx === 3) {
-              bType = 'SKYSCRAPER';
-              height = 24 + ((bId * 7) % 20); // 24m - 44m high
-              floors = Math.floor(height / 3.2);
-              roofStyle = (bId % 2 === 0) ? 'HELIPAD' : 'ANTENNA';
-              facadeColor = (bId % 3 === 0) ? '#1E3A8A' : '#0F172A';
-              accentColor = '#38BDF8';
-              residents = 0;
-              workers = 180 + (bId % 80);
-            } else {
-              bType = 'OFFICE_TOWER';
-              height = 16 + (bId % 10);
-              floors = Math.floor(height / 3.2);
-              roofStyle = 'FLAT';
-              facadeColor = '#334155';
-              accentColor = '#A855F7';
-              residents = 0;
-              workers = 120;
-            }
-          } else if (zone === 'INDUSTRIAL') {
-            if (plotIdx === 0) {
-              bType = 'FACTORY';
-              height = 8.5;
-              width = 10;
-              depth = 8;
-              floors = 2;
-              roofStyle = 'CHIMNEY';
-              facadeColor = '#78350F';
-              roofColor = '#451A03';
-              accentColor = '#F59E0B';
-              workers = 90;
-            } else if (plotIdx === 1) {
-              bType = 'SILO';
-              height = 11;
-              width = 6.5;
-              depth = 6.5;
-              floors = 1;
-              roofStyle = 'FLAT';
-              facadeColor = '#94A3B8';
-              accentColor = '#CBD5E1';
-              workers = 25;
-            } else {
-              bType = 'WAREHOUSE';
-              height = 6.5;
-              width = 9.5;
-              depth = 8.5;
-              floors = 2;
-              roofStyle = 'FLAT';
-              facadeColor = '#475569';
-              accentColor = '#E2E8F0';
-              workers = 65;
-            }
-            residents = 0;
-          } else if (zone === 'PUBLIC') {
-            // Civic District
-            if (plotIdx === 0) {
-              bType = 'HOSPITAL';
-              height = 11;
-              floors = 4;
-              roofStyle = 'HELIPAD';
-              facadeColor = '#F8FAFC';
-              accentColor = '#EF4444'; // Red Cross
-              workers = 140;
-            } else if (plotIdx === 1) {
-              bType = 'FIRE_STATION';
-              height = 7;
-              floors = 2;
-              roofStyle = 'ANTENNA';
-              facadeColor = '#B91C1C';
-              accentColor = '#FEE2E2';
-              workers = 45;
-            } else if (plotIdx === 2) {
-              bType = 'SCHOOL';
-              height = 6.5;
-              floors = 2;
-              roofStyle = 'PITCHED';
-              facadeColor = '#0284C7';
-              accentColor = '#BAE6FD';
-              workers = 50;
-            } else {
-              bType = 'POWER_PLANT';
-              height = 12;
-              floors = 3;
-              roofStyle = 'CHIMNEY';
-              facadeColor = '#D97706';
-              accentColor = '#FEF3C7';
-              workers = 35;
-            }
-            residents = 0;
-          } else {
-            // Residential
-            if (r <= 1 && c <= 1) {
-              // Suburban single family house
-              bType = 'HOUSE';
-              height = 4.2;
-              width = 6.8;
-              depth = 6.8;
-              floors = 2;
-              roofStyle = 'PITCHED';
-              facadeColor = (bId % 2 === 0) ? '#D97706' : '#059669';
-              roofColor = '#991B1B';
-              accentColor = '#FEF3C7';
-              residents = 8;
-              workers = 0;
-            } else {
-              // Urban apartments
-              bType = 'APARTMENT';
-              height = 10 + (bId % 8);
-              floors = Math.floor(height / 3.0);
-              roofStyle = 'FLAT';
-              facadeColor = '#2563EB';
-              accentColor = '#93C5FD';
-              residents = 75;
-              workers = 0;
-
-              // Designate one plot as active construction site
-              if (r === 1 && c === 4 && plotIdx === 0) {
-                underConstruction = true;
-                constructionProgress = 35;
-                roofStyle = 'SCAFFOLDING';
-                facadeColor = '#EAB308';
-                accentColor = '#FACC15';
-              }
-            }
-          }
-
-          this.buildings.push({
-            id: `bld-${bId}`,
-            name: `${zone.charAt(0) + zone.slice(1).toLowerCase()} ${bType.replace('_', ' ')} #${bId}`,
-            zone,
-            type: bType,
-            x: bx,
-            z: bz,
-            width,
-            depth,
-            height,
-            floors,
-            roofStyle,
-            facadeColor,
-            color: facadeColor,
-            roofColor,
-            accentColor,
-            residents,
-            maxResidents: Math.round(residents * 1.4),
-            workers,
-            maxWorkers: Math.round(workers * 1.4),
-            powerDemand: 10 + height * 2.5,
-            powerSupplied: true,
-            waterDemand: 80 + residents * 15 + workers * 8,
-            waterSupplied: true,
-            wasteAccumulated: (bId * 9) % 45,
-            underConstruction,
-            constructionProgress,
-            health: 100
-          });
-          bId++;
+        this.buildings.push({
+          id: `bld-block-${bCount}`,
+          name: isSuburban ? `Suburban House #${bCount}` : `Metropolitan Complex #${bCount}`,
+          zone: isSuburban ? 'RESIDENTIAL' : 'COMMERCIAL',
+          type: bType,
+          x: bx,
+          z: bz,
+          width: isSuburban ? 7.5 : 8.5,
+          depth: isSuburban ? 7.5 : 8.5,
+          height,
+          floors: isSuburban ? 2 : Math.floor(height / 3),
+          roofStyle: isSuburban ? 'PITCHED' : 'FLAT',
+          facadeColor: isSuburban ? '#059669' : '#2563EB',
+          color: isSuburban ? '#059669' : '#2563EB',
+          roofColor: '#78350F',
+          accentColor: '#93C5FD',
+          residents: isSuburban ? 8 : 65,
+          maxResidents: isSuburban ? 12 : 90,
+          workers: isSuburban ? 0 : 50,
+          maxWorkers: isSuburban ? 0 : 75,
+          powerDemand: 10 + height * 1.5,
+          powerSupplied: true,
+          waterDemand: 100 + height * 12,
+          waterSupplied: true,
+          wasteAccumulated: (bCount * 7) % 35,
+          health: 100
         });
+        bCount++;
       }
     }
 
-    // --- 3. Populate 48 Distinct Vehicles with Lane Following ---
-    const vehicleTypes: { type: VehicleType; color: string; count: number }[] = [
-      { type: 'CAR', color: '#38BDF8', count: 18 },
-      { type: 'SUV', color: '#10B981', count: 10 },
-      { type: 'BUS', color: '#F59E0B', count: 6 },
-      { type: 'TRUCK', color: '#94A3B8', count: 8 },
-      { type: 'FIRE_TRUCK', color: '#EF4444', count: 2 },
-      { type: 'AMBULANCE', color: '#FFFFFF', count: 2 },
-      { type: 'POLICE', color: '#1E293B', count: 2 }
-    ];
+    // 3. Populate Vehicles
+    for (let v = 0; v < 36; v++) {
+      const road = this.roads[v % this.roads.length];
+      const isEmergency = v === 0 || v === 1;
+      this.vehicles.push({
+        id: `veh-${v + 1}`,
+        type: isEmergency ? (v === 0 ? 'FIRE_TRUCK' : 'AMBULANCE') : (v % 4 === 0 ? 'BUS' : 'CAR'),
+        x: road.start[0],
+        z: road.start[1],
+        y: 0.35,
+        angle: 0,
+        speed: isEmergency ? 52 : (v % 4 === 0 ? 30 : 38),
+        maxSpeed: isEmergency ? 58 : 45,
+        color: isEmergency ? '#EF4444' : (v % 4 === 0 ? '#F59E0B' : '#38BDF8'),
+        roadId: road.id,
+        progress: (v * 0.16) % 0.95,
+        laneOffset: (v % 2 === 0 ? 1.3 : -1.3),
+        isEmergency,
+        sirenActive: false,
+        originName: road.name,
+        destinationName: 'Central Innovation Plaza'
+      });
+    }
 
-    let vIdx = 1;
-    vehicleTypes.forEach(group => {
-      for (let i = 0; i < group.count; i++) {
-        const road = this.roads[vIdx % this.roads.length];
-        const isEmergency = group.type === 'FIRE_TRUCK' || group.type === 'AMBULANCE' || group.type === 'POLICE';
-        const forwardDirection = (vIdx % 2 === 0);
-
-        this.vehicles.push({
-          id: `veh-${vIdx}`,
-          type: group.type,
-          x: road.start[0],
-          z: road.start[1],
-          y: 0.35,
-          angle: 0,
-          speed: isEmergency ? 52 : (group.type === 'BUS' ? 28 : (group.type === 'TRUCK' ? 32 : 40)),
-          maxSpeed: isEmergency ? 58 : 45,
-          color: group.color,
-          roadId: road.id,
-          progress: (i * 0.18 + (vIdx * 0.07)) % 0.95,
-          laneOffset: forwardDirection ? 1.3 : -1.3,
-          isEmergency,
-          sirenActive: false,
-          originName: forwardDirection ? road.name : 'Civic Terminal',
-          destinationName: 'Central District Plaza',
-          isWaitingAtSignal: false
-        });
-        vIdx++;
-      }
-    });
-
-    // --- 4. Populate Pedestrians on Sidewalks ---
-    const pedColors = ['#F43F5E', '#10B981', '#3B82F6', '#F59E0B', '#8B5CF6', '#EC4899', '#E2E8F0'];
-    for (let p = 0; p < 50; p++) {
+    // 4. Populate Sidewalk Pedestrians
+    for (let p = 0; p < 40; p++) {
       const road = this.roads[p % this.roads.length];
-      const side = (p % 2 === 0 ? 2.4 : -2.4);
-      const prog = (p * 0.08) % 1.0;
-      const px = road.start[0] + (road.end[0] - road.start[0]) * prog + (road.orientation === 'EW' ? 0 : side);
-      const pz = road.start[1] + (road.end[1] - road.start[1]) * prog + (road.orientation === 'EW' ? side : 0);
-
+      const prog = (p * 0.1) % 1.0;
+      const side = (p % 2 === 0 ? 2.6 : -2.6);
       this.pedestrians.push({
         id: `ped-${p + 1}`,
-        x: px,
-        z: pz,
-        targetX: px + (Math.random() * 4 - 2),
-        targetZ: pz + (Math.random() * 4 - 2),
-        speed: 2.2 + (p % 3) * 0.4,
+        x: road.start[0] + (road.end[0] - road.start[0]) * prog,
+        z: road.start[1] + (road.end[1] - road.start[1]) * prog + side,
+        targetX: road.end[0],
+        targetZ: road.end[1] + side,
+        speed: 2.2,
         angle: 0,
-        color: pedColors[p % pedColors.length],
+        color: '#94A3B8',
         state: 'WALKING'
       });
     }
+  }
 
-    // --- 5. Populate Citizens with schedules ---
-    const resBuildings = this.buildings.filter(b => b.zone === 'RESIDENTIAL');
-    const workBuildings = this.buildings.filter(b => b.zone === 'COMMERCIAL' || b.zone === 'INDUSTRIAL');
-
-    for (let c = 0; c < 120; c++) {
-      const home = resBuildings[c % resBuildings.length];
-      const work = workBuildings[c % workBuildings.length];
-      this.citizens.push({
-        id: `cit-${c + 1}`,
-        name: `Citizen #${c + 1}`,
-        age: 21 + (c % 52),
-        homeBuildingId: home ? home.id : 'bld-1',
-        workBuildingId: work ? work.id : 'bld-2',
-        state: 'AT_HOME',
-        satisfaction: 86 + (c % 14),
-        income: 4200 + (c % 30) * 120
-      });
-    }
-
-    this.recalculateMetrics();
+  // --- Initialize The 8 Autonomous AI Agent Characters ---
+  private initAIAgentCharacters(): void {
+    this.agentCharacters = [
+      {
+        id: 'agent-coordinator',
+        role: 'COORDINATOR',
+        name: 'Alex Vance',
+        title: 'Master Orchestrator & Chief Architect',
+        department: 'Executive Master Orchestration (Citadel Spire)',
+        color: '#38BDF8', // Cyan
+        x: 0,
+        z: -24,
+        targetX: 0,
+        targetZ: 0, // Central Plaza
+        speed: 3.5,
+        angle: 0,
+        homeBuildingId: 'bld-citadel',
+        currentBuildingId: 'bld-citadel',
+        currentTask: 'Overseeing multi-agent synchronization and pipeline throughput',
+        assignedTasks: ['Orchestrate factory state machine', 'Resolve dependency deadlocks'],
+        status: 'THINKING',
+        currentThought: 'All 8 departmental towers operating with optimal pipeline synchronization.',
+        thoughtBubble: 'Synthesizing global factory state...',
+        speechTimer: 5.0,
+        avatarIcon: 'Cpu',
+        level: 10,
+        skills: ['DAG Scheduling', 'State Machine Routing', 'Resource Balancing'],
+        toolsInUse: ['ProcessRunner', 'TaskStateMachine', 'EventDispatcher']
+      },
+      {
+        id: 'agent-analyst',
+        role: 'URBAN_PLANNER',
+        name: 'Dr. Maya Lin',
+        title: 'Product Vision Analyst & Planner',
+        department: 'Requirements & Specification Lab (Vision Lab)',
+        color: '#C084FC', // Purple
+        x: 24,
+        z: 0,
+        targetX: 0,
+        targetZ: 0,
+        speed: 3.2,
+        angle: Math.PI / 2,
+        homeBuildingId: 'bld-vision-lab',
+        currentBuildingId: 'bld-vision-lab',
+        currentTask: 'Decomposing project objectives into verifiable acceptance criteria',
+        assignedTasks: ['Synthesize PRD specifications', 'Define behavioral test invariants'],
+        status: 'COLLABORATING',
+        currentThought: 'User directives decomposed into modular feature contracts.',
+        thoughtBubble: 'Drafting acceptance criteria...',
+        speechTimer: 4.5,
+        avatarIcon: 'Layers',
+        level: 9,
+        skills: ['PRD Formulation', 'Contract Verification', 'User Stories'],
+        toolsInUse: ['SpecSynthesizer', 'AcceptanceCriteriaGenerator']
+      },
+      {
+        id: 'agent-architect',
+        role: 'TRAFFIC',
+        name: 'Marcus Vance',
+        title: 'Principal Software Architect',
+        department: 'System Architecture (Blueprint Complex)',
+        color: '#3B82F6', // Royal Blue
+        x: 24,
+        z: -24,
+        targetX: 24,
+        targetZ: -24,
+        speed: 3.4,
+        angle: -Math.PI / 4,
+        homeBuildingId: 'bld-blueprint',
+        currentBuildingId: 'bld-blueprint',
+        currentTask: 'Designing domain interfaces and database schemas',
+        assignedTasks: ['Design domain model interfaces', 'Structure modular package layers'],
+        status: 'THINKING',
+        currentThought: 'Clean architecture interfaces isolated from external boundaries.',
+        thoughtBubble: 'Optimizing DB schema index...',
+        speechTimer: 6.0,
+        avatarIcon: 'Compass',
+        level: 10,
+        skills: ['Clean Architecture', 'Type Hints', 'Schema Normalization'],
+        toolsInUse: ['SchemaArchitect', 'InterfaceContractValidator']
+      },
+      {
+        id: 'agent-engineer',
+        role: 'ENERGY',
+        name: 'Devon Cross',
+        title: 'Senior Implementation Engineer',
+        department: 'Source Code Fabrication (Foundry)',
+        color: '#F59E0B', // Amber Gold
+        x: -24,
+        z: 24,
+        targetX: -24,
+        targetZ: 24,
+        speed: 3.6,
+        angle: Math.PI * 0.75,
+        homeBuildingId: 'bld-foundry',
+        currentBuildingId: 'bld-foundry',
+        currentTask: 'Synthesizing robust FastAPI route handlers and business logic',
+        assignedTasks: ['Implement endpoint controllers', 'Integrate SQLite persistence'],
+        status: 'CODING',
+        currentThought: 'Generating strongly typed Pydantic payloads with zero silent failures.',
+        thoughtBubble: 'Writing AST route handler...',
+        speechTimer: 5.5,
+        avatarIcon: 'Sliders',
+        level: 9,
+        skills: ['Python 3.13 / FastAPI', 'TypeScript / React', 'AsyncIO Concurrency'],
+        toolsInUse: ['CodeFabricator', 'ASTRefactoringEngine']
+      },
+      {
+        id: 'agent-qa',
+        role: 'WATER_WASTE',
+        name: 'Elena Rostova',
+        title: 'QA Bastion Test Lead',
+        department: 'Quality Assurance & Automated Verification (QA Bastion)',
+        color: '#10B981', // Emerald
+        x: -24,
+        z: -24,
+        targetX: -24,
+        targetZ: -24,
+        speed: 3.3,
+        angle: -Math.PI * 0.75,
+        homeBuildingId: 'bld-qa-bastion',
+        currentBuildingId: 'bld-qa-bastion',
+        currentTask: 'Executing 20/20 pytest regression suites with edge-case assertion validation',
+        assignedTasks: ['Execute pytest suite', 'Validate error boundary edge cases'],
+        status: 'TESTING',
+        currentThought: '100% test pass rate across unit, integration, and security suites.',
+        thoughtBubble: '20/20 pytest assertions PASSED!',
+        speechTimer: 6.5,
+        avatarIcon: 'ShieldCheck',
+        level: 10,
+        skills: ['Pytest Test Automation', 'Coverage Profiling', 'Mutation Testing'],
+        toolsInUse: ['PytestVerifier', 'CoverageProfiler']
+      },
+      {
+        id: 'agent-diagnostic',
+        role: 'ECONOMY',
+        name: 'Dr. Aaron Chen',
+        title: 'Root Cause & Diagnostic Specialist',
+        department: 'Diagnostic Core & Troubleshooting',
+        color: '#EC4899', // Pink
+        x: -24,
+        z: 0,
+        targetX: -24,
+        targetZ: 0,
+        speed: 3.4,
+        angle: Math.PI,
+        homeBuildingId: 'bld-diagnostic',
+        currentBuildingId: 'bld-diagnostic',
+        currentTask: 'Performing automated root cause analysis on failed execution traces',
+        assignedTasks: ['Isolate exception stack traces', 'Generate precise regression diffs'],
+        status: 'THINKING',
+        currentThought: 'Zero runtime regressions detected across active sandbox threads.',
+        thoughtBubble: 'Traceback logs clean.',
+        speechTimer: 4.0,
+        avatarIcon: 'Radio',
+        level: 9,
+        skills: ['Traceback Deconstruction', 'Memory Profiling', 'Heuristic Repair'],
+        toolsInUse: ['TracebackAnalyzer', 'AutomatedPatchGenerator']
+      },
+      {
+        id: 'agent-security',
+        role: 'PUBLIC_SAFETY',
+        name: 'Kaelen Voss',
+        title: 'Security Sentinel & Bastion Lead',
+        department: 'Security Citadel & Policy Guardrails',
+        color: '#EF4444', // Crimson
+        x: 0,
+        z: 24,
+        targetX: 0,
+        targetZ: 24,
+        speed: 3.5,
+        angle: Math.PI / 2,
+        homeBuildingId: 'bld-security',
+        currentBuildingId: 'bld-security',
+        currentTask: 'Enforcing workspace path-jail containment and secret sanitization',
+        assignedTasks: ['Audit command whitelist', 'Enforce secret token redaction'],
+        status: 'COLLABORATING',
+        currentThought: 'Path jail containment active; all execution sandboxed in secure workspace.',
+        thoughtBubble: 'Security perimeter: 100% SECURE',
+        speechTimer: 7.0,
+        avatarIcon: 'Flame',
+        level: 10,
+        skills: ['Path Traversal Jail', 'Command Whitelisting', 'Secret Redaction'],
+        toolsInUse: ['PathJailVerifier', 'SecretRedactionEngine']
+      },
+      {
+        id: 'agent-devops',
+        role: 'WELFARE',
+        name: 'Sora Takahashi',
+        title: 'Cloud Release Dock Chief',
+        department: 'Deployment & CI/CD Pipeline (Release Dock)',
+        color: '#06B6D4', // Teal
+        x: 24,
+        z: 24,
+        targetX: 24,
+        targetZ: 24,
+        speed: 3.3,
+        angle: Math.PI / 4,
+        homeBuildingId: 'bld-release-dock',
+        currentBuildingId: 'bld-release-dock',
+        currentTask: 'Preparing production Docker assets and GitHub Actions CI pipelines',
+        assignedTasks: ['Build Docker container artifacts', 'Validate deployment manifests'],
+        status: 'DEPLOYING',
+        currentThought: 'Container manifests verified; release artifacts packaged for production.',
+        thoughtBubble: 'Docker container ready.',
+        speechTimer: 5.0,
+        avatarIcon: 'Zap',
+        level: 9,
+        skills: ['Docker OCI Containers', 'CI/CD Pipelines', 'Cloud Run Deployments'],
+        toolsInUse: ['DockerBuilder', 'ArtifactPackager']
+      }
+    ];
   }
 
   // --- Authoritative Simulation Tick Loop ---
@@ -460,7 +758,7 @@ export class CitySimulationEngine {
     const effectiveDelta = Math.min(deltaSeconds, 0.1) * this.simulationSpeed;
     this.tickCount++;
 
-    // Advance 24-hour simulation clock (smooth rate)
+    // Advance 24-hour simulation clock
     this.simulationTime = (this.simulationTime + (effectiveDelta * 0.04)) % 24.0;
 
     // 1. Update Traffic Lights at Intersections
@@ -472,47 +770,14 @@ export class CitySimulationEngine {
       }
     });
 
-    // 2. Authoritative Vehicle Movement with Signals, Lane Following, and Queuing
-    const roadVehicleTally: { [roadId: string]: number } = {};
-
+    // 2. Move Vehicles along road network
     this.vehicles.forEach(veh => {
       const road = this.roads.find(r => r.id === veh.roadId);
       if (!road) return;
 
-      roadVehicleTally[road.id] = (roadVehicleTally[road.id] || 0) + 1;
-
-      // Find intersection at the end of this road
-      const endIntersection = this.intersections.find(inter => 
-        Math.abs(inter.x - road.end[0]) < 1.0 && Math.abs(inter.z - road.end[1]) < 1.0
-      );
-
-      // Check if vehicle must stop for Red Signal at intersection
-      let shouldStopAtSignal = false;
-      if (endIntersection && veh.progress > 0.82 && veh.progress < 0.96 && !veh.isEmergency) {
-        if (road.orientation === 'EW' && endIntersection.signalState === 'NS_GREEN') {
-          shouldStopAtSignal = true; // EW light is RED
-        } else if (road.orientation === 'NS' && endIntersection.signalState === 'EW_GREEN') {
-          shouldStopAtSignal = true; // NS light is RED
-        }
-      }
-      veh.isWaitingAtSignal = shouldStopAtSignal;
-
-      // Calculate speed based on road conditions
-      let effectiveSpeed = veh.speed;
-      if (road.isClosed) {
-        effectiveSpeed = 4.0; // crawl off closed road
-      } else if (shouldStopAtSignal) {
-        effectiveSpeed = 0.0; // stopped at red light
-      } else {
-        const congestionSlowdown = Math.max(0.2, 1.0 - (road.density * 0.85));
-        effectiveSpeed = veh.speed * congestionSlowdown;
-      }
-
-      // Step progress along road vector
-      const step = (effectiveSpeed * 0.035 * effectiveDelta);
+      const step = (veh.speed * 0.035 * effectiveDelta);
       veh.progress = Math.min(1.0, veh.progress + step);
 
-      // Compute 3D world position with lateral lane offset
       const sx = road.start[0];
       const sz = road.start[1];
       const ex = road.end[0];
@@ -520,106 +785,231 @@ export class CitySimulationEngine {
       const dx = ex - sx;
       const dz = ez - sz;
       const roadLength = Math.sqrt(dx * dx + dz * dz) || 1;
-      const nx = -dz / roadLength; // perpendicular normal
+      const nx = -dz / roadLength;
       const nz = dx / roadLength;
 
       veh.x = sx + dx * veh.progress + (nx * veh.laneOffset);
       veh.z = sz + dz * veh.progress + (nz * veh.laneOffset);
       veh.angle = Math.atan2(dz, dx);
 
-      // Reached intersection / end of road -> transition to connecting road
       if (veh.progress >= 0.99) {
         veh.progress = 0.01;
-        // Search open connecting roads at this intersection
         const candidates = this.roads.filter(r => 
-          !r.isClosed &&
-          r.id !== road.id &&
+          !r.isClosed && r.id !== road.id &&
           ((Math.abs(r.start[0] - ex) < 1.0 && Math.abs(r.start[1] - ez) < 1.0) ||
            (Math.abs(r.end[0] - ex) < 1.0 && Math.abs(r.end[1] - ez) < 1.0))
         );
-
         if (candidates.length > 0) {
-          const nextRoad = candidates[Math.floor(Math.random() * candidates.length)];
-          veh.roadId = nextRoad.id;
-          // Set origin/destination info
-          veh.destinationName = nextRoad.name;
+          veh.roadId = candidates[Math.floor(Math.random() * candidates.length)].id;
         } else {
-          // Dead end or closed detour: flip lane and head back
           veh.laneOffset = -veh.laneOffset;
           veh.progress = 0.05;
         }
       }
     });
 
-    // 3. Recalculate Road Congestion Densities
-    this.roads.forEach(r => {
-      const count = roadVehicleTally[r.id] || 0;
-      r.density = r.isClosed ? 1.0 : Math.min(1.0, count / 5.0);
-    });
+    // 3. Update AI Agent Characters (Autonomous Movement & Speech)
+    this.agentCharacters.forEach(ag => {
+      // Countdown speech timer
+      if (ag.speechTimer !== undefined) {
+        ag.speechTimer -= effectiveDelta;
+        if (ag.speechTimer <= 0) {
+          // Refresh thought
+          ag.thoughtBubble = undefined;
+        }
+      }
 
-    // 4. Move Pedestrians along sidewalks
-    this.pedestrians.forEach(ped => {
-      const pdx = ped.targetX - ped.x;
-      const pdz = ped.targetZ - ped.z;
-      const dist = Math.sqrt(pdx * pdx + pdz * pdz);
+      // Check distance to target destination
+      const dx = ag.targetX - ag.x;
+      const dz = ag.targetZ - ag.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
 
-      if (dist < 0.5) {
-        // Pick new sidewalk destination
-        ped.targetX = ped.x + (Math.random() * 8 - 4);
-        ped.targetZ = ped.z + (Math.random() * 8 - 4);
+      if (dist > 0.8) {
+        // Move towards target
+        const step = ag.speed * effectiveDelta;
+        ag.x += (dx / dist) * step;
+        ag.z += (dz / dist) * step;
+        ag.angle = Math.atan2(dz, dx);
+        if (ag.status !== 'CODING' && ag.status !== 'TESTING') {
+          ag.status = 'WALKING';
+        }
       } else {
-        const moveDist = ped.speed * effectiveDelta;
-        ped.x += (pdx / dist) * moveDist;
-        ped.z += (pdz / dist) * moveDist;
-        ped.angle = Math.atan2(pdz, pdx);
-      }
-    });
+        // Reached destination -> collaborate or work
+        if (ag.status === 'WALKING') {
+          ag.status = 'THINKING';
+        }
 
-    // 5. Update Citizen Routines according to 24h clock
-    const isMorningRush = this.simulationTime >= 7.0 && this.simulationTime <= 9.5;
-    const isWorkHours = this.simulationTime > 9.5 && this.simulationTime < 17.0;
-    const isEveningRush = this.simulationTime >= 17.0 && this.simulationTime <= 19.5;
-
-    this.citizens.forEach(c => {
-      if (isMorningRush) c.state = 'COMMUTING_WORK';
-      else if (isWorkHours) c.state = 'AT_WORK';
-      else if (isEveningRush) c.state = 'COMMUTING_HOME';
-      else c.state = 'AT_HOME';
-    });
-
-    // 6. Update Construction Sites & Utilities
-    this.buildings.forEach(b => {
-      if (b.underConstruction) {
-        b.constructionProgress = Math.min(100, (b.constructionProgress || 0) + effectiveDelta * 3.5);
-        if (b.constructionProgress >= 100) {
-          b.underConstruction = false;
-          b.roofStyle = 'FLAT';
-          b.residents = Math.round(b.maxResidents * 0.9);
+        // Randomly pick a new landmark to visit or return home every ~20 seconds
+        if (Math.random() < 0.005 && !this.activeUnitedProject) {
+          const destinations = [
+            { x: 0, z: 0 }, // Central Innovation Plaza
+            { x: 0, z: -24 }, // Citadel
+            { x: 24, z: 0 }, // Vision Lab
+            { x: 24, z: -24 }, // Blueprint
+            { x: -24, z: 24 }, // Foundry
+            { x: -24, z: -24 }, // QA Bastion
+            { x: -24, z: 0 }, // Diagnostic
+            { x: 0, z: 24 }, // Security
+            { x: 24, z: 24 } // Release Dock
+          ];
+          const dest = destinations[Math.floor(Math.random() * destinations.length)];
+          ag.targetX = dest.x + (Math.random() * 4 - 2);
+          ag.targetZ = dest.z + (Math.random() * 4 - 2);
         }
       }
-      b.wasteAccumulated = Math.min(100, b.wasteAccumulated + effectiveDelta * 0.04);
-    });
 
-    // 7. Update Incidents (countdown / emergency vehicle containment)
-    this.incidents.forEach(inc => {
-      if (inc.status === 'RESPONDING') {
-        inc.timeRemaining = Math.max(0, inc.timeRemaining - effectiveDelta);
-        if (inc.timeRemaining <= 0) {
-          inc.status = 'RESOLVED';
-          if (inc.buildingId) {
-            const b = this.buildings.find(item => item.id === inc.buildingId);
-            if (b) b.onFire = false;
-          }
-          // Turn off emergency vehicle sirens
-          if (inc.dispatchedVehicleId) {
-            const v = this.vehicles.find(item => item.id === inc.dispatchedVehicleId);
-            if (v) v.sirenActive = false;
+      // Check for proximity collaboration with other agents
+      this.agentCharacters.forEach(other => {
+        if (other.id !== ag.id) {
+          const interDist = Math.sqrt((ag.x - other.x) ** 2 + (ag.z - other.z) ** 2);
+          if (interDist < 4.5 && !ag.thoughtBubble && Math.random() < 0.02) {
+            ag.speechTimer = 4.0;
+            ag.thoughtBubble = `Syncing with ${other.name.split(' ')[0]}...`;
           }
         }
-      }
+      });
     });
+
+    // 4. Update United Project Progression (Real Collective Intelligence)
+    if (this.activeUnitedProject && this.activeUnitedProject.status !== 'COMPLETED') {
+      const proj = this.activeUnitedProject;
+      proj.progress = Math.min(100, proj.progress + effectiveDelta * 4.0); // ~25 seconds to complete
+
+      if (proj.progress < 25 && proj.status !== 'PLANNING') {
+        proj.status = 'PLANNING';
+        proj.activeAgentId = 'agent-analyst';
+        const analyst = this.agentCharacters.find(a => a.id === 'agent-analyst');
+        if (analyst) {
+          analyst.targetX = 0; analyst.targetZ = 0; // Head to Plaza
+          analyst.thoughtBubble = 'Synthesizing PRD for United Project...';
+          analyst.speechTimer = 5.0;
+        }
+      } else if (proj.progress >= 25 && proj.progress < 50 && proj.status !== 'ARCHITECTING') {
+        proj.status = 'ARCHITECTING';
+        proj.activeAgentId = 'agent-architect';
+        proj.stageLogs.push({
+          timestamp: new Date().toLocaleTimeString(),
+          agentName: 'Dr. Maya Lin (Analyst)',
+          message: 'PRD approved. Passing system contract to Software Architect.',
+          step: 'PLANNING'
+        });
+        const arch = this.agentCharacters.find(a => a.id === 'agent-architect');
+        if (arch) {
+          arch.targetX = 24; arch.targetZ = -24; // Head to Blueprint Complex
+          arch.thoughtBubble = 'Designing modular architecture schema...';
+          arch.speechTimer = 5.0;
+        }
+      } else if (proj.progress >= 50 && proj.progress < 75 && proj.status !== 'IMPLEMENTING') {
+        proj.status = 'IMPLEMENTING';
+        proj.activeAgentId = 'agent-engineer';
+        proj.stageLogs.push({
+          timestamp: new Date().toLocaleTimeString(),
+          agentName: 'Marcus Vance (Architect)',
+          message: 'Architecture blueprint validated. Handing code generation to Foundry.',
+          step: 'ARCHITECTING'
+        });
+        const eng = this.agentCharacters.find(a => a.id === 'agent-engineer');
+        if (eng) {
+          eng.targetX = -24; eng.targetZ = 24; // Head to Foundry
+          eng.thoughtBubble = 'Fabricating source code modules...';
+          eng.speechTimer = 5.0;
+          eng.status = 'CODING';
+        }
+      } else if (proj.progress >= 75 && proj.progress < 95 && proj.status !== 'TESTING') {
+        proj.status = 'TESTING';
+        proj.activeAgentId = 'agent-qa';
+        proj.stageLogs.push({
+          timestamp: new Date().toLocaleTimeString(),
+          agentName: 'Devon Cross (Engineer)',
+          message: 'Source code synthesized. Dispatching to QA Bastion for verification.',
+          step: 'IMPLEMENTING'
+        });
+        const qa = this.agentCharacters.find(a => a.id === 'agent-qa');
+        if (qa) {
+          qa.targetX = -24; qa.targetZ = -24; // Head to QA Bastion
+          qa.thoughtBubble = 'Running 20/20 test assertions...';
+          qa.speechTimer = 5.0;
+          qa.status = 'TESTING';
+        }
+      } else if (proj.progress >= 100 && proj.status !== 'COMPLETED') {
+        proj.status = 'COMPLETED';
+        proj.deliverables = [
+          'backend/app/controllers/api_service.py',
+          'backend/tests/test_api_service.py (20/20 PASSED)',
+          'docker-compose.yml & Dockerfile',
+          'docs/ARCHITECTURE_SPEC.md'
+        ];
+        proj.stageLogs.push({
+          timestamp: new Date().toLocaleTimeString(),
+          agentName: 'Alex Vance (Orchestrator)',
+          message: `United Project '${proj.title}' successfully verified and completed!`,
+          step: 'COMPLETED'
+        });
+        // Celebration in plaza
+        this.agentCharacters.forEach((ag, idx) => {
+          ag.targetX = Math.cos(idx) * 6;
+          ag.targetZ = Math.sin(idx) * 6;
+          ag.thoughtBubble = 'United Project Complete!';
+          ag.speechTimer = 8.0;
+        });
+      }
+    }
 
     this.recalculateMetrics();
+  }
+
+  // --- Assign Direct Task to an Individual Agent ---
+  public assignTaskToAgent(agentId: string, taskDescription: string): void {
+    const ag = this.agentCharacters.find(a => a.id === agentId);
+    if (!ag) return;
+
+    ag.currentTask = taskDescription;
+    ag.assignedTasks.unshift(taskDescription);
+    ag.thoughtBubble = `Directive received: "${taskDescription.slice(0, 32)}..."`;
+    ag.speechTimer = 6.0;
+
+    // Head to their department or target building
+    const homeBld = this.buildings.find(b => b.id === ag.homeBuildingId);
+    if (homeBld) {
+      ag.targetX = homeBld.x;
+      ag.targetZ = homeBld.z;
+    }
+    ag.status = ag.role === 'ENERGY' ? 'CODING' : (ag.role === 'WATER_WASTE' ? 'TESTING' : 'THINKING');
+    ag.currentThought = `Executing directive: ${taskDescription}`;
+  }
+
+  // --- Deploy City-Wide United Project ---
+  public deployUnitedProject(title: string, description: string): UnitedProject {
+    const proj: UnitedProject = {
+      id: `proj-${Date.now()}`,
+      title,
+      description,
+      status: 'PLANNING',
+      progress: 5,
+      activeAgentId: 'agent-coordinator',
+      startedAt: new Date().toLocaleTimeString(),
+      deliverables: [],
+      stageLogs: [
+        {
+          timestamp: new Date().toLocaleTimeString(),
+          agentName: 'Alex Vance (Chief Architect)',
+          message: `Broadcasted United Project directive: "${title}". All 8 agents mobilized.`,
+          step: 'INITIATION'
+        }
+      ]
+    };
+
+    this.activeUnitedProject = proj;
+
+    // Mobilize agents towards Central Innovation Plaza for initial briefing
+    this.agentCharacters.forEach((ag, idx) => {
+      ag.targetX = Math.cos((idx / 8) * Math.PI * 2) * 5;
+      ag.targetZ = Math.sin((idx / 8) * Math.PI * 2) * 5;
+      ag.thoughtBubble = 'Rallying at Innovation Plaza...';
+      ag.speechTimer = 5.0;
+    });
+
+    return proj;
   }
 
   public recalculateMetrics(): void {
@@ -635,18 +1025,14 @@ export class CitySimulationEngine {
       totalWaterReq += b.waterDemand;
     });
 
-    const totalRoads = this.roads.length || 1;
     const openRoads = this.roads.filter(r => !r.isClosed);
     const avgDensity = openRoads.reduce((acc, r) => acc + r.density, 0) / (openRoads.length || 1);
     const congestionPct = Math.round(avgDensity * 100);
-
-    const activeIncidents = this.incidents.filter(i => i.status !== 'RESOLVED');
 
     this.metrics.population = totalPop;
     this.metrics.trafficCongestion = congestionPct;
     this.metrics.powerDemand = Math.round(totalPowerReq / 8);
     this.metrics.waterDemand = Math.round(totalWaterReq);
-    this.metrics.activeIncidentsCount = activeIncidents.length;
     this.metrics.powerGridStatus = this.metrics.powerProduction >= this.metrics.powerDemand 
       ? 100 
       : Math.round((this.metrics.powerProduction / this.metrics.powerDemand) * 100);
@@ -654,104 +1040,15 @@ export class CitySimulationEngine {
       ? 100 
       : Math.round((this.metrics.waterSupply / this.metrics.waterDemand) * 100);
 
-    // Dynamic Treasury accumulation
-    this.metrics.treasury += Math.round((this.metrics.incomeRate - this.metrics.expenseRate) * 0.02);
-
-    // Dynamic Citizen Satisfaction
-    let sat = 92 - (congestionPct * 0.35) - (activeIncidents.length * 9);
-    if (this.metrics.powerGridStatus < 100) sat -= (100 - this.metrics.powerGridStatus) * 0.6;
-    if (this.metrics.waterGridStatus < 100) sat -= (100 - this.metrics.waterGridStatus) * 0.5;
+    // Citizen Satisfaction
+    let sat = 92 - (congestionPct * 0.35);
+    if (this.activeUnitedProject?.status === 'COMPLETED') sat = 98;
     this.metrics.citizenSatisfaction = Math.max(15, Math.min(100, Math.round(sat)));
   }
 
-  // --- Real Interactive Interventions ---
-  public toggleRoadClosure(roadId: string): boolean {
-    const road = this.roads.find(r => r.id === roadId);
-    if (road) {
-      road.isClosed = !road.isClosed;
-      this.recalculateMetrics();
-      return road.isClosed;
-    }
-    return false;
-  }
-
-  public triggerEmergencyDispatch(incidentId: string): void {
-    const inc = this.incidents.find(i => i.id === incidentId);
-    if (!inc) return;
-
-    inc.status = 'RESPONDING';
-    const emergencyVeh = this.vehicles.find(v => v.isEmergency && !v.sirenActive);
-    if (emergencyVeh) {
-      emergencyVeh.sirenActive = true;
-      emergencyVeh.targetIncidentId = inc.id;
-      emergencyVeh.speed = 58;
-      inc.dispatchedVehicleId = emergencyVeh.id;
-    }
-  }
-
-  // --- Scenarios Ingestion ---
   public loadScenario(scenario: ScenarioType): void {
     this.activeScenario = scenario;
     this.generateCityLayout();
-
-    if (scenario === 'RUSH_HOUR_GRIDLOCK') {
-      this.simulationTime = 8.1;
-      // Close a central avenue to cause real bottleneck rerouting
-      if (this.roads[2]) this.roads[2].isClosed = true;
-      if (this.roads[3]) this.roads[3].isClosed = true;
-
-      // Spawn extra commuter vehicles
-      for (let i = 0; i < 24; i++) {
-        const road = this.roads[i % this.roads.length];
-        this.vehicles.push({
-          id: `veh-rush-${i}`,
-          type: 'CAR',
-          x: road.start[0],
-          z: road.start[1],
-          y: 0.35,
-          angle: 0,
-          speed: 26,
-          maxSpeed: 42,
-          color: '#E2E8F0',
-          roadId: road.id,
-          progress: Math.random() * 0.9,
-          laneOffset: (i % 2 === 0 ? 1.3 : -1.3),
-          isEmergency: false,
-          sirenActive: false,
-          originName: 'Suburban Commuter Zone',
-          destinationName: 'Downtown Financial Center'
-        });
-      }
-    } else if (scenario === 'POWER_GRID_FAILURE') {
-      this.metrics.powerProduction = 60.0; // severe shortage
-      this.buildings.slice(12, 28).forEach(b => { b.powerSupplied = false; });
-    } else if (scenario === 'INDUSTRIAL_FIRE_EMERGENCY') {
-      const factory = this.buildings.find(b => b.zone === 'INDUSTRIAL' && b.type === 'FACTORY');
-      if (factory) {
-        factory.onFire = true;
-        this.incidents.push({
-          id: `inc-fire-1`,
-          type: 'FIRE',
-          title: '3-Alarm Chemical Fire in Industrial Port',
-          buildingId: factory.id,
-          x: factory.x,
-          z: factory.z,
-          severity: 'CRITICAL',
-          status: 'ACTIVE',
-          timeRemaining: 28.0
-        });
-      }
-    } else if (scenario === 'TECH_BOOM_EXPANSION') {
-      this.metrics.treasury += 350000;
-      const b = this.buildings.find(item => item.type === 'HOUSE');
-      if (b) {
-        b.underConstruction = true;
-        b.constructionProgress = 15;
-        b.type = 'APARTMENT';
-        b.roofStyle = 'SCAFFOLDING';
-      }
-    }
-
-    this.recalculateMetrics();
+    this.initAIAgentCharacters();
   }
 }
