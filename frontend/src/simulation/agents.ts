@@ -147,6 +147,7 @@ export class CityGovernmentCouncil {
         candidate.underConstruction = true;
         candidate.constructionProgress = 5;
         candidate.type = 'APARTMENT';
+        candidate.roofStyle = 'SCAFFOLDING';
         candidate.height = 14;
         candidate.maxResidents = 60;
         engine.metrics.treasury -= 35000;

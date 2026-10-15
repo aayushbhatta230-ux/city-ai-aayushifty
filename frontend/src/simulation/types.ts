@@ -1,10 +1,12 @@
 export type ZoneType = 'RESIDENTIAL' | 'COMMERCIAL' | 'INDUSTRIAL' | 'PUBLIC' | 'PARK';
 export type BuildingType = 
-  | 'HOUSE' | 'APARTMENT' | 'OFFICE_TOWER' | 'MALL' 
-  | 'FACTORY' | 'WAREHOUSE' | 'HOSPITAL' | 'SCHOOL' 
+  | 'HOUSE' | 'APARTMENT' | 'SKYSCRAPER' | 'OFFICE_TOWER' | 'MALL' 
+  | 'FACTORY' | 'WAREHOUSE' | 'SILO' | 'HOSPITAL' | 'SCHOOL' 
   | 'FIRE_STATION' | 'POWER_PLANT' | 'WATER_TOWER' | 'PARK_SPACE';
 
-export type VehicleType = 'CAR' | 'BUS' | 'TRUCK' | 'FIRE_TRUCK' | 'AMBULANCE' | 'POLICE';
+export type RoofStyle = 'FLAT' | 'HELIPAD' | 'ANTENNA' | 'PITCHED' | 'CHIMNEY' | 'SCAFFOLDING';
+
+export type VehicleType = 'CAR' | 'SUV' | 'BUS' | 'TRUCK' | 'FIRE_TRUCK' | 'AMBULANCE' | 'POLICE';
 export type IncidentType = 'FIRE' | 'TRAFFIC_JAM' | 'POWER_OUTAGE' | 'WATER_BURST' | 'MEDICAL_EMERGENCY';
 export type AgentRoleType = 
   | 'COORDINATOR' 
@@ -29,7 +31,12 @@ export interface Building {
   width: number;
   depth: number;
   height: number;
-  color: string;
+  floors: number;
+  roofStyle: RoofStyle;
+  facadeColor: string;
+  color?: string; // backwards compatibility alias for facadeColor
+  roofColor: string;
+  accentColor: string;
   residents: number;
   maxResidents: number;
   workers: number;
@@ -54,6 +61,7 @@ export interface RoadSegment {
   speedLimit: number;
   isClosed: boolean;
   name: string;
+  orientation: 'EW' | 'NS';
 }
 
 export interface Intersection {
@@ -70,16 +78,32 @@ export interface Vehicle {
   type: VehicleType;
   x: number;
   z: number;
+  y: number;
   angle: number;
   speed: number;
   maxSpeed: number;
   color: string;
   roadId: string;
   progress: number; // 0.0 to 1.0 along road
+  laneOffset: number; // lateral offset for driving on right side of road
   isEmergency: boolean;
+  sirenActive?: boolean;
   originName: string;
   destinationName: string;
   targetIncidentId?: string;
+  isWaitingAtSignal?: boolean;
+}
+
+export interface Pedestrian {
+  id: string;
+  x: number;
+  z: number;
+  targetX: number;
+  targetZ: number;
+  speed: number;
+  angle: number;
+  color: string;
+  state: 'WALKING' | 'WAITING_CROSSWALK';
 }
 
 export interface Citizen {
@@ -148,6 +172,8 @@ export interface SimulationEvent {
   message: string;
   severity: 'INFO' | 'SUCCESS' | 'WARNING' | 'ALERT';
   entityId?: string;
+  x?: number;
+  z?: number;
 }
 
 export type ScenarioType = 

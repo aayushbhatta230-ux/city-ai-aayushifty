@@ -103,7 +103,7 @@ if "%CHOICE%"=="1" (
 
 if "%CHOICE%"=="2" (
     echo.
-    echo [*] Running 15-test verification suite...
+    echo [*] Running 20-test verification suite...
     cd /d "%~dp0backend"
     set PYTHONPATH=%~dp0backend
     python -m pytest tests -v

@@ -2,15 +2,11 @@ import React, { useState } from 'react';
 import { 
   Play, 
   Pause, 
-  FastForward, 
   Sun, 
   Moon, 
-  Compass, 
-  Layers, 
   Cpu, 
   Radio, 
   Flame, 
-  AlertTriangle, 
   Zap, 
   Droplet, 
   DollarSign, 
@@ -19,8 +15,11 @@ import {
   Heart, 
   ChevronRight, 
   ChevronLeft,
-  ShieldCheck,
-  Building2
+  Building2,
+  Navigation,
+  Compass,
+  Siren,
+  Sliders
 } from 'lucide-react';
 import { 
   CityMetrics, 
@@ -43,11 +42,13 @@ interface CityHUDProps {
   cameraMode: CameraMode;
   overlayMode: OverlayMode;
   selectedBuilding: Building | null;
+  selectedVehicle?: Vehicle | null;
   onSetSpeed: (speed: number) => void;
   onSelectScenario: (scen: ScenarioType) => void;
   onSelectCameraMode: (mode: CameraMode) => void;
   onSelectOverlayMode: (overlay: OverlayMode) => void;
   onTriggerIntervention: (actionName: string) => void;
+  onToggleRoadClosure?: () => void;
 }
 
 export const CityHUD: React.FC<CityHUDProps> = ({
@@ -60,11 +61,13 @@ export const CityHUD: React.FC<CityHUDProps> = ({
   cameraMode,
   overlayMode,
   selectedBuilding,
+  selectedVehicle,
   onSetSpeed,
   onSelectScenario,
   onSelectCameraMode,
   onSelectOverlayMode,
-  onTriggerIntervention
+  onTriggerIntervention,
+  onToggleRoadClosure
 }) => {
   const [showAgentsPanel, setShowAgentsPanel] = useState(true);
   const [showInspector, setShowInspector] = useState(true);
@@ -161,7 +164,7 @@ export const CityHUD: React.FC<CityHUDProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            <Zap size={15} className={metrics.powerGridStatus < 100 ? 'text-red-400' : 'text-yellow-400'} />
+            <Zap size={15} className={metrics.powerGridStatus < 100 ? 'text-red-400 animate-pulse' : 'text-yellow-400'} />
             <div>
               <div className="text-[10px] text-slate-500 uppercase">Power Grid</div>
               <div className="font-bold text-slate-100">{metrics.powerGridStatus}% ({metrics.powerDemand}MW)</div>
@@ -249,15 +252,22 @@ export const CityHUD: React.FC<CityHUDProps> = ({
             >
               Street
             </button>
+            <button
+              onClick={() => onSelectCameraMode('FOLLOW_VEHICLE')}
+              className={`px-2 py-1 rounded text-[11px] font-mono transition ${cameraMode === 'FOLLOW_VEHICLE' ? 'bg-amber-600 text-white font-bold' : 'text-slate-400 hover:text-white'}`}
+              title="Chase Cam on Selected Vehicle"
+            >
+              Follow
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Middle Row: Left Agent Government Drawer & Right Building Inspector */}
+      {/* Middle Row: Left Agent Government Drawer & Right Building/Vehicle Inspector */}
       <div className="flex-1 flex justify-between p-4 pointer-events-none overflow-hidden">
         {/* Left: AI City Government Council */}
         <div className={`transition-all duration-300 pointer-events-auto ${showAgentsPanel ? 'w-80' : 'w-10'}`}>
-          <div className="bg-[#0B0F19]/95 backdrop-blur border border-slate-800 rounded-xl p-4 shadow-2xl h-[460px] flex flex-col justify-between">
+          <div className="bg-[#0B0F19]/95 backdrop-blur border border-slate-800 rounded-xl p-4 shadow-2xl h-[480px] flex flex-col justify-between">
             <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-2">
               <div className="flex items-center gap-2">
                 <Cpu size={16} className="text-blue-400" />
@@ -294,6 +304,10 @@ export const CityHUD: React.FC<CityHUDProps> = ({
                     <div className="text-[10px] text-blue-400 font-mono line-clamp-2">
                       &gt; {ag.latestInsight}
                     </div>
+                    <div className="text-[9px] text-slate-500 font-mono pt-0.5 border-t border-slate-900 flex justify-between">
+                      <span>Interventions: {ag.interventionsCount}</span>
+                      <span>Confidence: {(ag.confidenceScore * 100).toFixed(0)}%</span>
+                    </div>
                   </div>
                 );
               })}
@@ -301,10 +315,10 @@ export const CityHUD: React.FC<CityHUDProps> = ({
           </div>
         </div>
 
-        {/* Right: Selected Building / Entity Inspector */}
+        {/* Right: Selected Building / Vehicle Urban Inspector */}
         <div className={`transition-all duration-300 pointer-events-auto ${showInspector ? 'w-80' : 'w-10'}`}>
-          <div className="bg-[#0B0F19]/95 backdrop-blur border border-slate-800 rounded-xl p-4 shadow-2xl h-[460px] flex flex-col justify-between">
-            <div>
+          <div className="bg-[#0B0F19]/95 backdrop-blur border border-slate-800 rounded-xl p-4 shadow-2xl h-[480px] flex flex-col justify-between">
+            <div className="overflow-y-auto pr-1">
               <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
                 <div className="flex items-center gap-2">
                   <Building2 size={16} className="text-emerald-400" />
@@ -322,11 +336,15 @@ export const CityHUD: React.FC<CityHUDProps> = ({
                   <div>
                     <h3 className="text-sm font-bold text-slate-100">{selectedBuilding.name}</h3>
                     <div className="text-[11px] text-slate-400 mt-0.5">
-                      Zone: <span className="text-blue-400 font-bold">{selectedBuilding.zone}</span> &bull; Type: {selectedBuilding.type}
+                      Zone: <span className="text-blue-400 font-bold">{selectedBuilding.zone}</span> &bull; {selectedBuilding.type}
                     </div>
                   </div>
 
                   <div className="bg-[#080B12] p-3 rounded-lg border border-slate-800 space-y-1.5 text-[11px]">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Floors & Roof:</span>
+                      <span className="text-slate-200">{selectedBuilding.floors} Floors ({selectedBuilding.roofStyle})</span>
+                    </div>
                     <div className="flex justify-between">
                       <span className="text-slate-500">Occupancy:</span>
                       <span className="text-slate-200">{selectedBuilding.residents} / {selectedBuilding.maxResidents}</span>
@@ -337,7 +355,7 @@ export const CityHUD: React.FC<CityHUDProps> = ({
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-500">Power Demand:</span>
-                      <span className={selectedBuilding.powerSupplied ? 'text-emerald-400' : 'text-red-400'}>
+                      <span className={selectedBuilding.powerSupplied ? 'text-emerald-400' : 'text-red-400 font-bold'}>
                         {selectedBuilding.powerDemand} kW ({selectedBuilding.powerSupplied ? 'Active' : 'Blackout'})
                       </span>
                     </div>
@@ -351,16 +369,77 @@ export const CityHUD: React.FC<CityHUDProps> = ({
                         {selectedBuilding.wasteAccumulated.toFixed(0)}%
                       </span>
                     </div>
+
+                    {selectedBuilding.underConstruction && (
+                      <div className="pt-1.5">
+                        <div className="flex justify-between text-[10px] text-amber-400 font-bold">
+                          <span>Construction Progress:</span>
+                          <span>{selectedBuilding.constructionProgress?.toFixed(0)}%</span>
+                        </div>
+                        <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden mt-1">
+                          <div 
+                            className="bg-amber-400 h-full transition-all duration-300"
+                            style={{ width: `${selectedBuilding.constructionProgress || 0}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
                     {selectedBuilding.onFire && (
-                      <div className="text-red-400 font-bold animate-pulse pt-1">
-                        [!] ACTIVE STRUCTURAL FIRE INCIDENT
+                      <div className="text-red-400 font-bold animate-pulse pt-1 flex items-center gap-1.5">
+                        <Flame size={14} />
+                        <span>[!] 3-ALARM STRUCTURAL FIRE</span>
                       </div>
                     )}
                   </div>
                 </div>
+              ) : selectedVehicle ? (
+                <div className="space-y-3 font-mono text-xs">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                      <Car size={16} className="text-blue-400" />
+                      <span>{selectedVehicle.type} ({selectedVehicle.id})</span>
+                    </h3>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      Destination: <span className="text-emerald-400 font-bold">{selectedVehicle.destinationName}</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#080B12] p-3 rounded-lg border border-slate-800 space-y-1.5 text-[11px]">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Current Speed:</span>
+                      <span className="text-slate-200 font-bold">{selectedVehicle.speed.toFixed(0)} km/h</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Signal Status:</span>
+                      <span className={selectedVehicle.isWaitingAtSignal ? 'text-amber-400 font-bold animate-pulse' : 'text-emerald-400'}>
+                        {selectedVehicle.isWaitingAtSignal ? 'Stopped at Red Light' : 'Free Flow'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Lane Alignment:</span>
+                      <span className="text-slate-200">{selectedVehicle.laneOffset > 0 ? 'Right Lane' : 'Left Lane'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Emergency Unit:</span>
+                      <span className={selectedVehicle.isEmergency ? 'text-red-400 font-bold' : 'text-slate-400'}>
+                        {selectedVehicle.isEmergency ? (selectedVehicle.sirenActive ? 'SIREN ACTIVE' : 'DISPATCHABLE') : 'CIVILIAN'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => onSelectCameraMode('FOLLOW_VEHICLE')}
+                    className="w-full bg-amber-600 hover:bg-amber-500 text-white font-semibold py-2 rounded text-xs transition flex items-center justify-center gap-1.5"
+                  >
+                    <Navigation size={13} />
+                    <span>Engage 3D Chase Camera</span>
+                  </button>
+                </div>
               ) : (
-                <div className="text-center py-16 text-slate-500 text-xs">
-                  Click on any building or infrastructure in the 3D city to inspect live utility demands, occupancy, and status.
+                <div className="text-center py-12 text-slate-500 text-xs space-y-2">
+                  <p>Click on any 3D skyscraper, house, vehicle, or civic center in the city to inspect live state.</p>
+                  <p className="text-[10px] text-slate-600 font-mono">Real-time occupancy, utility demands, signals, and routing telemetry.</p>
                 </div>
               )}
             </div>

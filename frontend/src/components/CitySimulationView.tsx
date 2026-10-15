@@ -5,6 +5,7 @@ import { CityScene } from './city3d/CityScene';
 import { CityHUD } from './city3d/CityHUD';
 import { 
   Building, 
+  Vehicle,
   CameraMode, 
   OverlayMode, 
   ScenarioType, 
@@ -27,6 +28,7 @@ export const CitySimulationView: React.FC = () => {
 
   const [selectedEntity, setSelectedEntity] = useState<{ type: 'BUILDING' | 'VEHICLE' | 'INCIDENT'; id: string } | null>(null);
   const [selectedBuilding, setSelectedBuilding] = useState<Building | null>(null);
+  const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
 
   const [agents, setAgents] = useState<AgentObservation[]>(
     Array.from(councilRef.current.agents.values())
@@ -63,22 +65,34 @@ export const CitySimulationView: React.FC = () => {
       if (engine.tickCount % 5 === 0) {
         setMetrics({ ...engine.metrics });
         setSimulationTime(engine.simulationTime);
+
+        // Keep vehicle telemetry up to date if selected
+        if (selectedEntity?.type === 'VEHICLE') {
+          const v = engine.vehicles.find(item => item.id === selectedEntity.id);
+          if (v) setSelectedVehicle({ ...v });
+        }
       }
     };
 
     animId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animId);
-  }, []);
+  }, [selectedEntity]);
 
-  // Update selected building inspector
+  // Update selected entity inspector (Building or Vehicle)
   useEffect(() => {
     if (selectedEntity?.type === 'BUILDING') {
       const b = engineRef.current.buildings.find(item => item.id === selectedEntity.id) || null;
       setSelectedBuilding(b);
+      setSelectedVehicle(null);
+    } else if (selectedEntity?.type === 'VEHICLE') {
+      const v = engineRef.current.vehicles.find(item => item.id === selectedEntity.id) || null;
+      setSelectedVehicle(v);
+      setSelectedBuilding(null);
     } else {
       setSelectedBuilding(null);
+      setSelectedVehicle(null);
     }
-  }, [selectedEntity, metrics]);
+  }, [selectedEntity]);
 
   // Handlers
   const handleSetSpeed = (speed: number) => {
@@ -107,6 +121,13 @@ export const CitySimulationView: React.FC = () => {
     }
   };
 
+  const handleToggleRoadClosure = () => {
+    if (engineRef.current.roads.length > 0) {
+      engineRef.current.toggleRoadClosure(engineRef.current.roads[0].id);
+      setMetrics({ ...engineRef.current.metrics });
+    }
+  };
+
   return (
     <div className="relative w-full h-[calc(100vh-65px)] overflow-hidden bg-[#06080E]">
       {/* 3D WebGL Three.js City World */}
@@ -115,6 +136,7 @@ export const CitySimulationView: React.FC = () => {
         roads={engineRef.current.roads}
         intersections={engineRef.current.intersections}
         vehicles={engineRef.current.vehicles}
+        pedestrians={engineRef.current.pedestrians}
         incidents={engineRef.current.incidents}
         simulationTime={simulationTime}
         cameraMode={cameraMode}
@@ -134,11 +156,13 @@ export const CitySimulationView: React.FC = () => {
         cameraMode={cameraMode}
         overlayMode={overlayMode}
         selectedBuilding={selectedBuilding}
+        selectedVehicle={selectedVehicle}
         onSetSpeed={handleSetSpeed}
         onSelectScenario={handleSelectScenario}
         onSelectCameraMode={setCameraMode}
         onSelectOverlayMode={setOverlayMode}
         onTriggerIntervention={handleTriggerIntervention}
+        onToggleRoadClosure={handleToggleRoadClosure}
       />
     </div>
   );
