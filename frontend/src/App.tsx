@@ -12,7 +12,7 @@ import { ApprovalCenterView } from './components/ApprovalCenterView';
 import { ProjectMemoryView } from './components/ProjectMemoryView';
 import { ModelConfigView } from './components/ModelConfigView';
 
-import { AgentCity3D } from './components/AgentCity3D';
+import { CitySimulationView } from './components/CitySimulationView';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('city3d');
@@ -168,11 +168,7 @@ export const App: React.FC = () => {
 
       <main className="flex-1">
         {activeTab === 'city3d' && (
-          <AgentCity3D
-            project={selectedProject}
-            tasks={tasks}
-            isEmergencyStopped={isEmergencyStopped}
-          />
+          <CitySimulationView />
         )}
 
         {activeTab === 'dashboard' && (
